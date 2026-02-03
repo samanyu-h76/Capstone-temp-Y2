@@ -130,6 +130,17 @@ def save_feedback(city, feedback):
 
     df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
     df.to_csv(path, index=False)
+# =========================
+# Images
+# =========================
+def get_city_image(city):
+    """
+    Fetch a dynamic Unsplash image for a city.
+    No API key required.
+    """
+    query = city.replace(" ", "-").lower()
+    return f"https://source.unsplash.com/800x500/?{query},travel"
+
 
 # =========================
 # UI
@@ -173,8 +184,12 @@ if submitted:
 
         for _, row in ranked.iterrows():
             st.subheader(row["city"])
-            st.caption(row["destination_name"])  # UI-only
-            st.write(f"📍 {row['country']} ({row['continent']})")
+            st.subheader(row["city"])
+            st.caption(f"{row['country']} ({row['continent']})")
+
+            image_url = get_city_image(row["city"])
+            st.image(image_url, use_column_width=True)
+
             st.write(f"⭐ Rating: {row['avg_rating']}")
 
             advice = gemini_weather_advice(
