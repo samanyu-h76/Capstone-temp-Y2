@@ -3,130 +3,199 @@ import pandas as pd
 import numpy as np
 import google.generativeai as genai
 from datetime import datetime
+import os
 
-# Configure Gemini (API key via Streamlit secrets or env variable)
+# =========================
+# CONFIG
+# =========================
+st.set_page_config(
+    page_title="AI Cultural Tourism Engine",
+    layout="wide"
+)
+
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 model = genai.GenerativeModel("gemini-pro")
 
-## Load Dataset
+# =========================
+# LOAD DATA
+# =========================
 @st.cache_data
 def load_data():
-    return pd.read_csv("datasets/places_master_dataset.csv")
+    master = pd.read_csv("datasets/master_destinations.csv")
+    patterns = pd.read_csv("datasets/user_preference_patterns.csv")
+    return master, patterns
 
-places = load_data()
+master, patterns = load_data()
 
-## User Input Form
-st.title("🌍 AI Cultural Tourism Recommendation Engine")
+# =========================
+# UTILITIES
+# =========================
+def get_age_group(age):
+    if age <= 25:
+        return "18-25"
+    elif age <= 35:
+        return "26-35"
+    elif age <= 45:
+        return "36-45"
+    elif age <= 55:
+        return "46-55"
+    else:
+        return "56+"
 
-with st.form("user_input_form"):
-    age = st.slider("Age", 10, 80, 25)
-    experience = st.selectbox(
-        "Primary Interest",
-        ["culture", "nature", "adventure", "beaches"]
-    )
-    duration = st.slider("Trip Duration (days)", 1, 14, 5)
-    accessibility = st.checkbox("Accessibility required")
-    weather_pref = st.selectbox(
-        "Weather Preference",
-        ["Warm", "Pleasant", "Cold"]
-    )
-    season = st.selectbox(
-        "Preferred Season",
-        ["Spring", "Summer", "Autumn", "Winter"]
-    )
-    budget = st.selectbox(
-        "Budget Level",
-        ["Budget", "Mid-range", "Premium"]
-    )
-
-    submitted = st.form_submit_button("Get Recommendations")
-
-## Filtering Logic
-def filter_places(df, budget, season, climate):
-    return df[
-        (df["budget_level"] == budget) &
-        (df["best_season"] == season) &
-        (df["climate_label"] == climate)
+def get_user_pattern(patterns, interest, age_group):
+    row = patterns[
+        (patterns["interest"] == interest) &
+        (patterns["age_group"] == age_group)
     ]
-## Ranking Logic
-def rank_places(df, interest):
+    return row.iloc[0] if len(row) > 0 else None
+
+def get_dynamic_weights(pattern_row):
+    if pattern_row is None:
+        return {
+            "experience": 0.6,
+            "rating": 0.25,
+            "duration": 0.1,
+            "accessibility": 0.05
+        }
+
+    return {
+        "experience": 0.6,
+        "rating": 0.25,
+        "duration": 0.1,
+        "accessibility": pattern_row["accessibility_rate"] * 0.05
+    }
+
+# =========================
+# FILTER + RANK
+# =========================
+def filter_cities(df, user):
+    return df[
+        (df["budget_level"] == user["budget"]) &
+        (df[f"climate_{user['season'].lower()}_label"] == user["weather"])
+    ]
+
+def rank_cities(df, user, patterns):
+    age_group = get_age_group(user["age"])
+    pattern_row = get_user_pattern(patterns, user["interest"], age_group)
+    weights = get_dynamic_weights(pattern_row)
+
     df = df.copy()
     df["rating_norm"] = df["avg_rating"] / 5
+    df["experience_match"] = df[f"{user['interest'].lower()}_score"]
+
+    df["duration_match"] = 1 - (
+        abs(df["ideal_duration_days"] - user["duration"]) /
+        df["ideal_duration_days"]
+    ).clip(0, 1)
 
     df["final_score"] = (
-        0.7 * df[interest] +
-        0.3 * df["rating_norm"]
+        weights["experience"] * df["experience_match"] +
+        weights["rating"] * df["rating_norm"] +
+        weights["duration"] * df["duration_match"]
     )
 
     return df.sort_values("final_score", ascending=False)
 
-## Gemini Weather Reasoning
-def gemini_weather_advice(place, climate):
+# =========================
+# GEMINI FUNCTIONS
+# =========================
+def gemini_weather_advice(city, climate):
     prompt = f"""
-    Given a destination with climate {climate},
-    suggest suitable activities and travel tips.
-    Destination: {place}
+    The city is {city} with a {climate} climate.
+    Suggest suitable activities and travel tips.
     """
-    response = model.generate_content(prompt)
-    return response.text
+    return model.generate_content(prompt).text
 
-## Gemini Multilingual Description
 def gemini_translate(text, language):
     prompt = f"Translate this into {language}: {text}"
-    response = model.generate_content(prompt)
-    return response.text
+    return model.generate_content(prompt).text
 
-## Feedback Storage
-def save_feedback(destination, feedback):
+# =========================
+# FEEDBACK
+# =========================
+def save_feedback(city, feedback):
+    os.makedirs("feedback", exist_ok=True)
+    path = "feedback/feedback.csv"
+
     row = {
-        "destination": destination,
+        "city": city,
         "feedback": feedback,
         "timestamp": datetime.now()
     }
+
     try:
-        df = pd.read_csv("feedback/feedback.csv")
+        df = pd.read_csv(path)
     except:
         df = pd.DataFrame(columns=row.keys())
 
     df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
-    df.to_csv("feedback/feedback.csv", index=False)
+    df.to_csv(path, index=False)
 
-## Main Execution
+# =========================
+# UI
+# =========================
+st.title("🌍 AI Cultural Tourism Recommendation Engine")
+
+with st.form("user_form"):
+    age = st.slider("Age", 18, 80, 25)
+    interest = st.selectbox(
+        "Primary Interest",
+        ["Culture", "Adventure", "Nature", "Beach"]
+    )
+    duration = st.slider("Trip Duration (days)", 1, 14, 5)
+    accessibility = st.checkbox("Accessibility required")
+    weather = st.selectbox("Weather Preference", ["Warm", "Pleasant", "Cold"])
+    season = st.selectbox("Season", ["Spring", "Summer", "Autumn", "Winter"])
+    budget = st.selectbox("Budget Level", ["Budget", "Mid-range", "Luxury"])
+
+    submitted = st.form_submit_button("Get Recommendations")
+
+# =========================
+# EXECUTION
+# =========================
 if submitted:
-    filtered = filter_places(places, budget, season, weather_pref)
+    user_input = {
+        "age": age,
+        "interest": interest,
+        "duration": duration,
+        "accessibility": accessibility,
+        "weather": weather,
+        "season": season,
+        "budget": budget
+    }
+
+    filtered = filter_cities(master, user_input)
 
     if filtered.empty:
-        st.warning("No destinations match your preferences.")
+        st.warning("No matching cities found. Try adjusting preferences.")
     else:
-        ranked = rank_places(filtered, experience).head(3)
+        ranked = rank_cities(filtered, user_input, patterns).head(3)
 
         for _, row in ranked.iterrows():
-            st.subheader(row["destination_name"])
+            st.subheader(row["city"])
+            st.caption(row["destination_name"])  # UI-only
             st.write(f"📍 {row['country']} ({row['continent']})")
             st.write(f"⭐ Rating: {row['avg_rating']}")
 
             advice = gemini_weather_advice(
-                row["destination_name"],
-                row["climate_label"]
+                row["city"],
+                row[f"climate_{season.lower()}_label"]
             )
             st.info(advice)
 
-            language = st.selectbox(
+            lang = st.selectbox(
                 "Translate description to:",
                 ["English", "Hindi", "Spanish"],
-                key=row["destination_name"]
+                key=row["city"]
             )
 
-            translated = gemini_translate(
-                row["destination_name"], language
-            )
+            translated = gemini_translate(row["description"], lang)
             st.write(translated)
 
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("👍", key=f"up_{row['destination_name']}"):
-                    save_feedback(row["destination_name"], "up")
+                if st.button("👍", key=f"up_{row['city']}"):
+                    save_feedback(row["city"], "up")
             with col2:
-                if st.button("👎", key=f"down_{row['destination_name']}"):
-                    save_feedback(row["destination_name"], "down")
-
+                if st.button("👎", key=f"down_{row['city']}"):
+                    save_feedback(row["city"], "down")
