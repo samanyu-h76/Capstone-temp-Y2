@@ -16,6 +16,12 @@ st.set_page_config(
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 model = genai.GenerativeModel("gemini-pro")
 
+GEMINI_AVAILABLE = True
+try:
+    model.generate_content("Ping")
+except Exception:
+    GEMINI_AVAILABLE = False
+
 # =========================
 # LOAD DATA
 # =========================
@@ -100,11 +106,27 @@ def rank_cities(df, user, patterns):
 # GEMINI FUNCTIONS
 # =========================
 def gemini_weather_advice(city, climate):
-    prompt = f"""
-    The city is {city} with a {climate} climate.
-    Suggest suitable activities and travel tips.
     """
-    return model.generate_content(prompt).text
+    Gemini-powered weather-based advice.
+    Falls back safely if API fails.
+    """
+    try:
+        prompt = f"""
+        You are a travel assistant.
+        The city is {city} and the climate is {climate}.
+        Suggest suitable activities and travel tips in 2-3 sentences.
+        """
+        response = model.generate_content(prompt)
+        return response.text.strip()
+    
+    except Exception:
+        # SAFE FALLBACK (NO CRASH)
+        if climate == "Warm":
+            return f"{city} is ideal for outdoor exploration, local sightseeing, and relaxed cultural walks."
+        elif climate == "Cold":
+            return f"{city} is better suited for indoor attractions, museums, cafés, and cultural experiences."
+        else:
+            return f"{city} offers a pleasant balance of outdoor sightseeing and cultural activities."
 
 def gemini_translate(text, language):
     prompt = f"Translate this into {language}: {text}"
