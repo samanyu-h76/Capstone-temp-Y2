@@ -133,14 +133,15 @@ def save_feedback(city, feedback):
 # =========================
 # Images
 # =========================
+import time
+
 def get_city_image(city):
     """
-    Fetch a dynamic Unsplash image for a city.
-    No API key required.
+    Force Unsplash to return a fresh image (avoids broken redirect issue).
     """
     query = city.replace(" ", "-").lower()
-    return f"https://source.unsplash.com/800x500/?{query},travel"
-
+    timestamp = int(time.time())  # forces refresh
+    return f"https://source.unsplash.com/800x500/?{query},travel&sig={timestamp}"
 
 # =========================
 # UI
