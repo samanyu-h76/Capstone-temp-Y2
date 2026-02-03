@@ -133,8 +133,20 @@ def gemini_weather_advice(city, climate):
             return f"{city} offers a pleasant balance of outdoor sightseeing and cultural activities."
 
 def gemini_translate(text, language):
-    prompt = f"Translate this into {language}: {text}"
-    return model.generate_content(prompt).text
+    """
+    Gemini-based translation with safe fallback.
+    """
+    try:
+        if language == "English":
+            return text  # no translation needed
+
+        prompt = f"Translate the following text into {language}:\n{text}"
+        response = model.generate_content(prompt)
+        return response.text.strip()
+
+    except Exception:
+        # SAFE FALLBACK (NO CRASH)
+        return text
 
 # =========================
 # FEEDBACK
