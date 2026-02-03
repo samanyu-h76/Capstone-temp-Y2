@@ -22,6 +22,10 @@ try:
 except Exception:
     GEMINI_AVAILABLE = False
 
+if not GEMINI_AVAILABLE:
+    st.info("ℹ️ AI explanations are currently running in fallback mode.")
+
+
 # =========================
 # LOAD DATA
 # =========================
