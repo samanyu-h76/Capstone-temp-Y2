@@ -5,7 +5,7 @@ import google.generativeai as genai
 from datetime import datetime
 
 # Configure Gemini (API key via Streamlit secrets or env variable)
-genai.configure(api_key=st.secrets["AQ.Ab8RN6Kzp5PcOXxJCnUXnGY29Jcey7TtMkbiJqAt2r0gKIrtlQ"])
+genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 model = genai.GenerativeModel("gemini-pro")
 
 ## Load Dataset
