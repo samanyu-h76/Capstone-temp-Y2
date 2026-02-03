@@ -130,18 +130,20 @@ def save_feedback(city, feedback):
 
     df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
     df.to_csv(path, index=False)
+    
 # =========================
 # Images
 # =========================
-import time
+import hashlib
 
 def get_city_image(city):
     """
-    Force Unsplash to return a fresh image (avoids broken redirect issue).
+    Deterministic image per city using Picsum.
+    No redirects. Works reliably on Streamlit Cloud.
     """
-    query = city.replace(" ", "-").lower()
-    timestamp = int(time.time())  # forces refresh
-    return f"https://source.unsplash.com/800x500/?{query},travel&sig={timestamp}"
+    city_hash = int(hashlib.md5(city.encode()).hexdigest(), 16)
+    image_id = city_hash % 1000  # Picsum has many images
+    return f"https://picsum.photos/seed/{image_id}/800/500"
 
 # =========================
 # UI
