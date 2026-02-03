@@ -184,7 +184,6 @@ if submitted:
 
         for _, row in ranked.iterrows():
             st.subheader(row["city"])
-            st.subheader(row["city"])
             st.caption(f"{row['country']} ({row['continent']})")
 
             image_url = get_city_image(row["city"])
