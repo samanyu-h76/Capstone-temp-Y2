@@ -4,6 +4,7 @@ import numpy as np
 import google.generativeai as genai
 from datetime import datetime
 import os
+import hashlib
 
 # =========================
 # CONFIG
@@ -13,18 +14,19 @@ st.set_page_config(
     layout="wide"
 )
 
-genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-model = genai.GenerativeModel("models/gemini-1.5-pro")
-
+# -------------------------
+# Gemini setup
+# -------------------------
 GEMINI_AVAILABLE = True
 try:
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    model = genai.GenerativeModel("models/gemini-1.5-pro")
     model.generate_content("Ping")
 except Exception:
     GEMINI_AVAILABLE = False
 
 if not GEMINI_AVAILABLE:
     st.info("ℹ️ AI explanations are currently running in fallback mode.")
-
 
 # =========================
 # LOAD DATA
@@ -61,19 +63,8 @@ def get_user_pattern(patterns, interest, age_group):
 
 def get_dynamic_weights(pattern_row):
     if pattern_row is None:
-        return {
-            "experience": 0.6,
-            "rating": 0.25,
-            "duration": 0.1,
-            "accessibility": 0.05
-        }
-
-    return {
-        "experience": 0.6,
-        "rating": 0.25,
-        "duration": 0.1,
-        "accessibility": pattern_row["accessibility_rate"] * 0.05
-    }
+        return {"experience": 0.6, "rating": 0.25, "duration": 0.15}
+    return {"experience": 0.6, "rating": 0.25, "duration": 0.15}
 
 # =========================
 # FILTER + RANK
@@ -107,45 +98,30 @@ def rank_cities(df, user, patterns):
     return df.sort_values("final_score", ascending=False)
 
 # =========================
-# GEMINI FUNCTIONS
+# GEMINI FUNCTIONS (SAFE)
 # =========================
 def gemini_weather_advice(city, climate):
-    """
-    Gemini-powered weather-based advice.
-    Falls back safely if API fails.
-    """
+    if not GEMINI_AVAILABLE:
+        return f"{city} offers a {climate.lower()} climate suitable for sightseeing and cultural exploration."
+
     try:
         prompt = f"""
         You are a travel assistant.
         The city is {city} and the climate is {climate}.
         Suggest suitable activities and travel tips in 2-3 sentences.
         """
-        response = model.generate_content(prompt)
-        return response.text.strip()
-    
+        return model.generate_content(prompt).text.strip()
     except Exception:
-        # SAFE FALLBACK (NO CRASH)
-        if climate == "Warm":
-            return f"{city} is ideal for outdoor exploration, local sightseeing, and relaxed cultural walks."
-        elif climate == "Cold":
-            return f"{city} is better suited for indoor attractions, museums, cafés, and cultural experiences."
-        else:
-            return f"{city} offers a pleasant balance of outdoor sightseeing and cultural activities."
+        return f"{city} offers a {climate.lower()} climate suitable for sightseeing and cultural exploration."
 
 def gemini_translate(text, language):
-    """
-    Gemini-based translation with safe fallback.
-    """
+    if language == "English" or not GEMINI_AVAILABLE:
+        return text
+
     try:
-        if language == "English":
-            return text  # no translation needed
-
         prompt = f"Translate the following text into {language}:\n{text}"
-        response = model.generate_content(prompt)
-        return response.text.strip()
-
+        return model.generate_content(prompt).text.strip()
     except Exception:
-        # SAFE FALLBACK (NO CRASH)
         return text
 
 # =========================
@@ -168,19 +144,13 @@ def save_feedback(city, feedback):
 
     df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
     df.to_csv(path, index=False)
-    
-# =========================
-# Images
-# =========================
-import hashlib
 
+# =========================
+# IMAGE (STABLE)
+# =========================
 def get_city_image(city):
-    """
-    Deterministic image per city using Picsum.
-    No redirects. Works reliably on Streamlit Cloud.
-    """
     city_hash = int(hashlib.md5(city.encode()).hexdigest(), 16)
-    image_id = city_hash % 1000  # Picsum has many images
+    image_id = city_hash % 1000
     return f"https://picsum.photos/seed/{image_id}/800/500"
 
 # =========================
@@ -190,12 +160,8 @@ st.title("🌍 AI Cultural Tourism Recommendation Engine")
 
 with st.form("user_form"):
     age = st.slider("Age", 18, 80, 25)
-    interest = st.selectbox(
-        "Primary Interest",
-        ["Culture", "Adventure", "Nature", "Beach"]
-    )
+    interest = st.selectbox("Primary Interest", ["Culture", "Adventure", "Nature", "Beach"])
     duration = st.slider("Trip Duration (days)", 1, 14, 5)
-    accessibility = st.checkbox("Accessibility required")
     weather = st.selectbox("Weather Preference", ["Warm", "Pleasant", "Cold"])
     season = st.selectbox("Season", ["Spring", "Summer", "Autumn", "Winter"])
     budget = st.selectbox("Budget Level", ["Budget", "Mid-range", "Luxury"])
@@ -210,7 +176,6 @@ if submitted:
         "age": age,
         "interest": interest,
         "duration": duration,
-        "accessibility": accessibility,
         "weather": weather,
         "season": season,
         "budget": budget
@@ -224,32 +189,31 @@ if submitted:
         ranked = rank_cities(filtered, user_input, patterns).head(3)
 
         for i, (_, row) in enumerate(ranked.iterrows()):
-    st.subheader(row["city"])
-    st.caption(f"{row['country']} ({row['continent']})")
+            st.subheader(row["city"])
+            st.caption(f"{row['country']} ({row['continent']})")
 
-    st.image(get_city_image(row["city"]), use_column_width=True)
+            st.image(get_city_image(row["city"]), use_column_width=True)
+            st.write(f"⭐ Rating: {row['avg_rating']}")
 
-    st.write(f"⭐ Rating: {row['avg_rating']}")
+            advice = gemini_weather_advice(
+                row["city"],
+                row[f"climate_{season.lower()}_label"]
+            )
+            st.info(advice)
 
-    advice = gemini_weather_advice(
-        row["city"],
-        row[f"climate_{season.lower()}_label"]
-    )
-    st.info(advice)
+            lang = st.selectbox(
+                "Translate description to:",
+                ["English", "Hindi", "Spanish"],
+                key=f"lang_{row['city']}_{i}"
+            )
 
-    lang = st.selectbox(
-        "Translate description to:",
-        ["English", "Hindi", "Spanish"],
-        key=f"lang_{row['city']}_{i}"
-    )
+            translated = gemini_translate(row["description"], lang)
+            st.write(translated)
 
-    translated = gemini_translate(row["description"], lang)
-    st.write(translated)
-
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("👍", key=f"up_{row['city']}_{i}"):
-            save_feedback(row["city"], "up")
-    with col2:
-        if st.button("👎", key=f"down_{row['city']}_{i}"):
-            save_feedback(row["city"], "down")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("👍", key=f"up_{row['city']}_{i}"):
+                    save_feedback(row["city"], "up")
+            with col2:
+                if st.button("👎", key=f"down_{row['city']}_{i}"):
+                    save_feedback(row["city"], "down")
