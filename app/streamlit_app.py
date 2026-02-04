@@ -620,13 +620,14 @@ Format each day clearly with times and activity types that match the traveler's 
                             prompt,
                             generation_config=genai.types.GenerationConfig(
                                 temperature=0.8,
-                                max_output_tokens=2000,
+                                max_output_tokens=4000,
                             )
                         )
                         
                         if response and response.text:
                             st.success("Itinerary Generated!")
-                            st.markdown(response.text)
+                            with st.container():
+                                st.markdown(response.text, unsafe_allow_html=True)
                             
                             # Save itinerary to Firebase
                             if FIREBASE_AVAILABLE and db is not None and st.session_state.firebase_doc_id:
