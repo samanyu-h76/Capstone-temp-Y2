@@ -182,7 +182,7 @@ Climate: {climate}
 Season: {season}
 Traveler Interest: {interest}
 
-2.5-flashvide 2-3 sentences with:
+Provide 2-3 sentences with:
 1. What the weather is typically like
 2. 2-3 specific activities or attractions suitable for this weather
 3. One practical travel tip
@@ -190,7 +190,7 @@ Traveler Interest: {interest}
 Keep it concise, friendly, and actionable."""
 
         response = model.generate_content(
-            2.5-flashmpt,
+            prompt,
             generation_config=genai.types.GenerationConfig(
                 temperature=0.7,
                 max_output_tokens=200,
@@ -214,14 +214,14 @@ def gemini_translate(text, language):
     try:
         model = genai.GenerativeModel("gemini-2.5-flash")
         
-        2.5-flashmpt = f"""Translate the following text to {language}. 
-Only 2.5-flashvide the translation, nothing else.
+        prompt = f"""Translate the following text to {language}. 
+Only provide the translation, nothing else.
 
 Text to translate:
 {text}"""
 
         response = model.generate_content(
-            2.5-flashmpt,
+            prompt,
             generation_config=genai.types.GenerationConfig(
                 temperature=0.3,
                 max_output_tokens=500,
@@ -236,6 +236,7 @@ Text to translate:
     except Exception as e:
         st.warning(f"Translation failed: {str(e)}")
         return text
+
 
 # =========================
 # FEEDBACK
