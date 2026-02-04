@@ -223,34 +223,33 @@ if submitted:
     else:
         ranked = rank_cities(filtered, user_input, patterns).head(3)
 
-        for _, row in ranked.iterrows():
-            st.subheader(row["city"])
-            st.caption(f"{row['country']} ({row['continent']})")
+        for i, (_, row) in enumerate(ranked.iterrows()):
+    st.subheader(row["city"])
+    st.caption(f"{row['country']} ({row['continent']})")
 
-            image_url = get_city_image(row["city"])
-            st.image(image_url, use_column_width=True)
+    st.image(get_city_image(row["city"]), use_column_width=True)
 
-            st.write(f"⭐ Rating: {row['avg_rating']}")
+    st.write(f"⭐ Rating: {row['avg_rating']}")
 
-            advice = gemini_weather_advice(
-                row["city"],
-                row[f"climate_{season.lower()}_label"]
-            )
-            st.info(advice)
+    advice = gemini_weather_advice(
+        row["city"],
+        row[f"climate_{season.lower()}_label"]
+    )
+    st.info(advice)
 
-            lang = st.selectbox(
-                "Translate description to:",
-                ["English", "Hindi", "Spanish"],
-                key=row["city"]
-            )
+    lang = st.selectbox(
+        "Translate description to:",
+        ["English", "Hindi", "Spanish"],
+        key=f"lang_{row['city']}_{i}"
+    )
 
-            translated = gemini_translate(row["description"], lang)
-            st.write(translated)
+    translated = gemini_translate(row["description"], lang)
+    st.write(translated)
 
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("👍", key=f"up_{row['city']}"):
-                    save_feedback(row["city"], "up")
-            with col2:
-                if st.button("👎", key=f"down_{row['city']}"):
-                    save_feedback(row["city"], "down")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("👍", key=f"up_{row['city']}_{i}"):
+            save_feedback(row["city"], "up")
+    with col2:
+        if st.button("👎", key=f"down_{row['city']}_{i}"):
+            save_feedback(row["city"], "down")
