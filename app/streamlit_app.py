@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import google.generativeai as genai
+import google.genai as genai
 from datetime import datetime
 import os
 import hashlib
