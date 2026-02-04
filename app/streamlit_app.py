@@ -175,7 +175,7 @@ def gemini_weather_advice(city, climate, season, interest):
     try:
         model = genai.GenerativeModel("gemini-2.5-flash")
         
-        2.5-flashmpt = f"""You are a helpful travel assistant. 
+        prompt = f"""You are a helpful travel assistant. 
 
 City: {city}
 Climate: {climate}
