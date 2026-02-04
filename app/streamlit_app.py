@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import google.genai as genai
+import google.generativeai as genai
 from datetime import datetime
 import os
 import hashlib
@@ -41,7 +41,7 @@ def initialize_gemini():
         genai.configure(api_key=api_key)
         
         # Test the connection with a simple prompt
-        model = genai.GenerativeModel("models/gemini-2.5-flash")  # Using flash for faster responses
+        model = genai.GenerativeModel("gemini-2.5-flash")  # Using flash for faster responses
         response = model.generate_content("Say 'OK' if you can read this.")
         
         if response and response.text:
