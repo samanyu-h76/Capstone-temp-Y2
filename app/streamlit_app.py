@@ -15,27 +15,86 @@ st.set_page_config(
 )
 
 # -------------------------
-# Gemini setup
+# Gemini setup with better error handling
 # -------------------------
-GEMINI_AVAILABLE = True
-try:
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    model = genai.GenerativeModel("models/gemini-1.5-pro")
-    model.generate_content("Ping")
-except Exception:
-    GEMINI_AVAILABLE = False
+GEMINI_AVAILABLE = False
+gemini_error_message = ""
 
-if not GEMINI_AVAILABLE:
-    st.info("ℹ️ AI explanations are currently running in fallback mode.")
+def initialize_gemini():
+    """Initialize Gemini with proper error handling and diagnostics"""
+    global GEMINI_AVAILABLE, gemini_error_message
+    
+    try:
+        # Check if API key exists
+        if "GEMINI_API_KEY" not in st.secrets:
+            gemini_error_message = "GEMINI_API_KEY not found in secrets"
+            return False
+        
+        api_key = st.secrets["GEMINI_API_KEY"]
+        
+        # Validate API key format
+        if not api_key or len(api_key) < 10:
+            gemini_error_message = "Invalid API key format"
+            return False
+        
+        # Configure Gemini
+        genai.configure(api_key=api_key)
+        
+        # Test the connection with a simple prompt
+        model = genai.GenerativeModel("models/gemini-1.5-flash")  # Using flash for faster responses
+        response = model.generate_content("Say 'OK' if you can read this.")
+        
+        if response and response.text:
+            GEMINI_AVAILABLE = True
+            return True
+        else:
+            gemini_error_message = "Gemini responded but with empty text"
+            return False
+            
+    except Exception as e:
+        gemini_error_message = f"Gemini initialization error: {str(e)}"
+        return False
+
+# Initialize Gemini
+initialize_gemini()
+
+# Show status in sidebar
+with st.sidebar:
+    st.subheader("🤖 AI Status")
+    if GEMINI_AVAILABLE:
+        st.success("✅ Gemini API Connected")
+    else:
+        st.error("❌ Gemini API Unavailable")
+        with st.expander("Error Details"):
+            st.write(gemini_error_message)
+            st.info("""
+            **To fix this:**
+            1. Go to your Streamlit Cloud dashboard
+            2. Click on your app settings
+            3. Navigate to 'Secrets'
+            4. Add:
+            ```
+            GEMINI_API_KEY = "your-api-key-here"
+            ```
+            5. Get your API key from: https://aistudio.google.com/app/apikey
+            """)
 
 # =========================
 # LOAD DATA
 # =========================
 @st.cache_data
 def load_data():
-    master = pd.read_csv("datasets/master_destinations.csv")
-    patterns = pd.read_csv("datasets/user_preference_patterns.csv")
-    return master, patterns
+    """Load datasets with error handling"""
+    try:
+        master = pd.read_csv("datasets/master_destinations.csv")
+        patterns = pd.read_csv("datasets/user_preference_patterns.csv")
+        return master, patterns
+    except FileNotFoundError as e:
+        st.error(f"Dataset not found: {e}")
+        st.stop()
+    except Exception as e:
+        st.error(f"Error loading data: {e}")
+        st.stop()
 
 master, patterns = load_data()
 
@@ -98,30 +157,78 @@ def rank_cities(df, user, patterns):
     return df.sort_values("final_score", ascending=False)
 
 # =========================
-# GEMINI FUNCTIONS (SAFE)
+# GEMINI FUNCTIONS (IMPROVED)
 # =========================
-def gemini_weather_advice(city, climate):
+def gemini_weather_advice(city, climate, season, interest):
+    """Generate weather-based travel advice using Gemini"""
+    fallback = f"{city} offers a {climate.lower()} climate during {season}, suitable for {interest.lower()} activities and cultural exploration."
+    
     if not GEMINI_AVAILABLE:
-        return f"{city} offers a {climate.lower()} climate suitable for sightseeing and cultural exploration."
+        return fallback
 
     try:
-        prompt = f"""
-        You are a travel assistant.
-        The city is {city} and the climate is {climate}.
-        Suggest suitable activities and travel tips in 2-3 sentences.
-        """
-        return model.generate_content(prompt).text.strip()
-    except Exception:
-        return f"{city} offers a {climate.lower()} climate suitable for sightseeing and cultural exploration."
+        model = genai.GenerativeModel("models/gemini-1.5-flash")
+        
+        prompt = f"""You are a helpful travel assistant. 
+
+City: {city}
+Climate: {climate}
+Season: {season}
+Traveler Interest: {interest}
+
+Provide 2-3 sentences with:
+1. What the weather is typically like
+2. 2-3 specific activities or attractions suitable for this weather
+3. One practical travel tip
+
+Keep it concise, friendly, and actionable."""
+
+        response = model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.7,
+                max_output_tokens=200,
+            )
+        )
+        
+        if response and response.text:
+            return response.text.strip()
+        else:
+            return fallback
+            
+    except Exception as e:
+        st.warning(f"AI advice generation failed: {str(e)}")
+        return fallback
 
 def gemini_translate(text, language):
+    """Translate text using Gemini"""
     if language == "English" or not GEMINI_AVAILABLE:
         return text
 
     try:
-        prompt = f"Translate the following text into {language}:\n{text}"
-        return model.generate_content(prompt).text.strip()
-    except Exception:
+        model = genai.GenerativeModel("models/gemini-1.5-flash")
+        
+        prompt = f"""Translate the following text to {language}. 
+Only provide the translation, nothing else.
+
+Text to translate:
+{text}"""
+
+        response = model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.3,
+                max_output_tokens=500,
+            )
+        )
+        
+        if response and response.text:
+            return response.text.strip()
+        else:
+            return text
+            
+    except Exception as e:
+        st.warning(f"Translation failed: {str(e)}")
         return text
 
 # =========================
@@ -157,16 +264,22 @@ def get_city_image(city):
 # UI
 # =========================
 st.title("🌍 AI Cultural Tourism Recommendation Engine")
+st.markdown("*Powered by Gemini AI for personalized travel recommendations*")
 
 with st.form("user_form"):
-    age = st.slider("Age", 18, 80, 25)
-    interest = st.selectbox("Primary Interest", ["Culture", "Adventure", "Nature", "Beach"])
-    duration = st.slider("Trip Duration (days)", 1, 14, 5)
-    weather = st.selectbox("Weather Preference", ["Warm", "Pleasant", "Cold"])
-    season = st.selectbox("Season", ["Spring", "Summer", "Autumn", "Winter"])
-    budget = st.selectbox("Budget Level", ["Budget", "Mid-range", "Luxury"])
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        age = st.slider("Age", 18, 80, 25)
+        interest = st.selectbox("Primary Interest", ["Culture", "Adventure", "Nature", "Beach"])
+        duration = st.slider("Trip Duration (days)", 1, 14, 5)
+    
+    with col2:
+        weather = st.selectbox("Weather Preference", ["Warm", "Pleasant", "Cold"])
+        season = st.selectbox("Season", ["Spring", "Summer", "Autumn", "Winter"])
+        budget = st.selectbox("Budget Level", ["Budget", "Mid-range", "Luxury"])
 
-    submitted = st.form_submit_button("Get Recommendations")
+    submitted = st.form_submit_button("🔍 Get Recommendations", use_container_width=True)
 
 # =========================
 # EXECUTION
@@ -181,39 +294,74 @@ if submitted:
         "budget": budget
     }
 
-    filtered = filter_cities(master, user_input)
+    with st.spinner("Finding your perfect destinations..."):
+        filtered = filter_cities(master, user_input)
 
     if filtered.empty:
-        st.warning("No matching cities found. Try adjusting preferences.")
+        st.warning("⚠️ No matching cities found. Try adjusting your preferences.")
     else:
         ranked = rank_cities(filtered, user_input, patterns).head(3)
+        
+        st.success(f"✨ Found {len(ranked)} perfect destinations for you!")
+        st.markdown("---")
 
-        for i, (_, row) in enumerate(ranked.iterrows()):
-            st.subheader(row["city"])
-            st.caption(f"{row['country']} ({row['continent']})")
+        for i, (_, row) in enumerate(ranked.iterrows(), 1):
+            with st.container():
+                st.subheader(f"{i}. {row['city']}")
+                st.caption(f"📍 {row['country']} ({row['continent']})")
 
-            st.image(get_city_image(row["city"]), use_column_width=True)
-            st.write(f"⭐ Rating: {row['avg_rating']}")
+                # Image
+                st.image(get_city_image(row['city']), use_container_width=True)
+                
+                # Rating
+                st.write(f"⭐ **Rating:** {row['avg_rating']}/5.0")
+                st.write(f"🎯 **Match Score:** {row['final_score']:.2f}")
 
-            advice = gemini_weather_advice(
-                row["city"],
-                row[f"climate_{season.lower()}_label"]
-            )
-            st.info(advice)
+                # AI-generated weather advice
+                with st.expander("🌤️ Weather & Activity Suggestions", expanded=True):
+                    advice = gemini_weather_advice(
+                        row["city"],
+                        row[f"climate_{season.lower()}_label"],
+                        season,
+                        interest
+                    )
+                    st.info(advice)
 
-            lang = st.selectbox(
-                "Translate description to:",
-                ["English", "Hindi", "Spanish"],
-                key=f"lang_{row['city']}_{i}"
-            )
+                # Description with translation
+                st.write("📝 **Description:**")
+                
+                lang = st.selectbox(
+                    "Select language:",
+                    ["English", "Hindi", "Spanish", "French", "German"],
+                    key=f"lang_{row['city']}_{i}",
+                    help="Powered by Gemini AI translation"
+                )
 
-            translated = gemini_translate(row["description"], lang)
-            st.write(translated)
+                if lang != "English":
+                    with st.spinner(f"Translating to {lang}..."):
+                        translated = gemini_translate(row["description"], lang)
+                        st.write(translated)
+                else:
+                    st.write(row["description"])
 
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("👍", key=f"up_{row['city']}_{i}"):
-                    save_feedback(row["city"], "up")
-            with col2:
-                if st.button("👎", key=f"down_{row['city']}_{i}"):
-                    save_feedback(row["city"], "down")
+                # Feedback
+                st.write("**Was this recommendation helpful?**")
+                col1, col2, col3 = st.columns([1, 1, 8])
+                with col1:
+                    if st.button("👍 Yes", key=f"up_{row['city']}_{i}"):
+                        save_feedback(row["city"], "up")
+                        st.success("Thanks for your feedback!")
+                with col2:
+                    if st.button("👎 No", key=f"down_{row['city']}_{i}"):
+                        save_feedback(row["city"], "down")
+                        st.success("Thanks for your feedback!")
+
+                st.markdown("---")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style='text-align: center; color: gray;'>
+    <small>AI Cultural Tourism Engine • Week 3 Capstone Project</small>
+</div>
+""", unsafe_allow_html=True)
