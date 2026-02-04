@@ -27,7 +27,7 @@ GEMINI_AVAILABLE = False
 gemini_error_message = ""
 
 def initialize_gemini():
-    """Initialize Gemini with 2.5-flashper error handling and diagnostics"""
+    """Initialize Gemini with proper error handling and diagnostics"""
     global GEMINI_AVAILABLE, gemini_error_message
     
     try:
@@ -46,8 +46,8 @@ def initialize_gemini():
         # Configure Gemini
         genai.configure(api_key=api_key)
         
-        # Test the connection with a simple 2.5-flashmpt
-        model = genai.GenerativeModel("gemini-2.5-flash")  # Using stable gemini-2.5-flash
+        # Test the connection with a simple prompt
+        model = genai.GenerativeModel("gemini-2.5-flash")  # Using flash for faster responses
         response = model.generate_content("Say 'OK' if you can read this.")
         
         if response and response.text:
@@ -163,7 +163,7 @@ def rank_cities(df, user, patterns):
     return df.sort_values("final_score", ascending=False)
 
 # =========================
-# GEMINI FUNCTIONS (IM2.5-flashVED)
+# GEMINI FUNCTIONS (IMPROVED)
 # =========================
 def gemini_weather_advice(city, climate, season, interest):
     """Generate weather-based travel advice using Gemini"""
@@ -236,7 +236,6 @@ Text to translate:
     except Exception as e:
         st.warning(f"Translation failed: {str(e)}")
         return text
-
 
 # =========================
 # FEEDBACK
@@ -382,6 +381,6 @@ if st.session_state.ranked_results is not None:
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center; color: gray;'>
-    <small>AI Cultural Tourism Engine • Week 3 Capstone 2.5-flashject</small>
+    <small>AI Cultural Tourism Engine • Week 3 Capstone Project</small>
 </div>
 """, unsafe_allow_html=True)
