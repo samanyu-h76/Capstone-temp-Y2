@@ -14,6 +14,12 @@ st.set_page_config(
     layout="wide"
 )
 
+# Initialize session state for storing results
+if 'ranked_results' not in st.session_state:
+    st.session_state.ranked_results = None
+if 'user_input' not in st.session_state:
+    st.session_state.user_input = None
+
 # -------------------------
 # Gemini setup with better error handling
 # -------------------------
@@ -21,7 +27,7 @@ GEMINI_AVAILABLE = False
 gemini_error_message = ""
 
 def initialize_gemini():
-    """Initialize Gemini with proper error handling and diagnostics"""
+    """Initialize Gemini with 2.5-flashper error handling and diagnostics"""
     global GEMINI_AVAILABLE, gemini_error_message
     
     try:
@@ -40,8 +46,8 @@ def initialize_gemini():
         # Configure Gemini
         genai.configure(api_key=api_key)
         
-        # Test the connection with a simple prompt
-        model = genai.GenerativeModel("gemini-2.5-flash")  # Using flash for faster responses
+        # Test the connection with a simple 2.5-flashmpt
+        model = genai.GenerativeModel("gemini-2.5-flash")  # Using stable gemini-2.5-flash
         response = model.generate_content("Say 'OK' if you can read this.")
         
         if response and response.text:
@@ -157,7 +163,7 @@ def rank_cities(df, user, patterns):
     return df.sort_values("final_score", ascending=False)
 
 # =========================
-# GEMINI FUNCTIONS (IMPROVED)
+# GEMINI FUNCTIONS (IM2.5-flashVED)
 # =========================
 def gemini_weather_advice(city, climate, season, interest):
     """Generate weather-based travel advice using Gemini"""
@@ -169,14 +175,14 @@ def gemini_weather_advice(city, climate, season, interest):
     try:
         model = genai.GenerativeModel("gemini-2.5-flash")
         
-        prompt = f"""You are a helpful travel assistant. 
+        2.5-flashmpt = f"""You are a helpful travel assistant. 
 
 City: {city}
 Climate: {climate}
 Season: {season}
 Traveler Interest: {interest}
 
-Provide 2-3 sentences with:
+2.5-flashvide 2-3 sentences with:
 1. What the weather is typically like
 2. 2-3 specific activities or attractions suitable for this weather
 3. One practical travel tip
@@ -184,7 +190,7 @@ Provide 2-3 sentences with:
 Keep it concise, friendly, and actionable."""
 
         response = model.generate_content(
-            prompt,
+            2.5-flashmpt,
             generation_config=genai.types.GenerationConfig(
                 temperature=0.7,
                 max_output_tokens=200,
@@ -208,14 +214,14 @@ def gemini_translate(text, language):
     try:
         model = genai.GenerativeModel("gemini-2.5-flash")
         
-        prompt = f"""Translate the following text to {language}. 
-Only provide the translation, nothing else.
+        2.5-flashmpt = f"""Translate the following text to {language}. 
+Only 2.5-flashvide the translation, nothing else.
 
 Text to translate:
 {text}"""
 
         response = model.generate_content(
-            prompt,
+            2.5-flashmpt,
             generation_config=genai.types.GenerationConfig(
                 temperature=0.3,
                 max_output_tokens=500,
@@ -299,69 +305,82 @@ if submitted:
 
     if filtered.empty:
         st.warning("⚠️ No matching cities found. Try adjusting your preferences.")
+        st.session_state.ranked_results = None
+        st.session_state.user_input = None
     else:
         ranked = rank_cities(filtered, user_input, patterns).head(3)
         
-        st.success(f"✨ Found {len(ranked)} perfect destinations for you!")
-        st.markdown("---")
+        # Store results in session state
+        st.session_state.ranked_results = ranked
+        st.session_state.user_input = user_input
 
-        for i, (_, row) in enumerate(ranked.iterrows(), 1):
-            with st.container():
-                st.subheader(f"{i}. {row['city']}")
-                st.caption(f"📍 {row['country']} ({row['continent']})")
+# Display results from session state (persists across reruns)
+if st.session_state.ranked_results is not None:
+    ranked = st.session_state.ranked_results
+    user_input = st.session_state.user_input
+    season = user_input["season"]
+    interest = user_input["interest"]
+    
+    st.success(f"✨ Found {len(ranked)} perfect destinations for you!")
+    st.markdown("---")
 
-                # Image
-                st.image(get_city_image(row['city']), use_container_width=True)
-                
-                # Rating
-                st.write(f"⭐ **Rating:** {row['avg_rating']}/5.0")
-                st.write(f"🎯 **Match Score:** {row['final_score']:.2f}")
+    for i, (_, row) in enumerate(ranked.iterrows(), 1):
+        with st.container():
+            st.subheader(f"{i}. {row['city']}")
+            st.caption(f"📍 {row['country']} ({row['continent']})")
 
-                # AI-generated weather advice
-                with st.expander("🌤️ Weather & Activity Suggestions", expanded=True):
-                    advice = gemini_weather_advice(
-                        row["city"],
-                        row[f"climate_{season.lower()}_label"],
-                        season,
-                        interest
-                    )
-                    st.info(advice)
+            # Image
+            st.image(get_city_image(row['city']), use_container_width=True)
+            
+            # Rating
+            st.write(f"⭐ **Rating:** {row['avg_rating']}/5.0")
+            st.write(f"🎯 **Match Score:** {row['final_score']:.2f}")
 
-                # Description with translation
-                st.write("📝 **Description:**")
-                
-                lang = st.selectbox(
-                    "Select language:",
-                    ["English", "Hindi", "Spanish", "French", "German"],
-                    key=f"lang_{row['city']}_{i}",
-                    help="Powered by Gemini AI translation"
+            # AI-generated weather advice
+            with st.expander("🌤️ Weather & Activity Suggestions", expanded=True):
+                advice = gemini_weather_advice(
+                    row["city"],
+                    row[f"climate_{season.lower()}_label"],
+                    season,
+                    interest
                 )
+                st.info(advice)
 
-                if lang != "English":
-                    with st.spinner(f"Translating to {lang}..."):
-                        translated = gemini_translate(row["description"], lang)
-                        st.write(translated)
-                else:
-                    st.write(row["description"])
+            # Description with translation
+            st.write("📝 **Description:**")
+            
+            lang = st.selectbox(
+                "Select language:",
+                ["English", "Hindi", "Spanish", "French", "German"],
+                key=f"lang_{row['city']}_{i}",
+                help="Powered by Gemini AI translation"
+            )
 
-                # Feedback
-                st.write("**Was this recommendation helpful?**")
-                col1, col2, col3 = st.columns([1, 1, 8])
-                with col1:
-                    if st.button("👍 Yes", key=f"up_{row['city']}_{i}"):
-                        save_feedback(row["city"], "up")
-                        st.success("Thanks for your feedback!")
-                with col2:
-                    if st.button("👎 No", key=f"down_{row['city']}_{i}"):
-                        save_feedback(row["city"], "down")
-                        st.success("Thanks for your feedback!")
+            if lang != "English":
+                with st.spinner(f"Translating to {lang}..."):
+                    translated = gemini_translate(row["description"], lang)
+                    st.write(translated)
+            else:
+                st.write(row["description"])
 
-                st.markdown("---")
+            # Feedback
+            st.write("**Was this recommendation helpful?**")
+            col1, col2, col3 = st.columns([1, 1, 8])
+            with col1:
+                if st.button("👍 Yes", key=f"up_{row['city']}_{i}"):
+                    save_feedback(row["city"], "up")
+                    st.success("Thanks for your feedback!")
+            with col2:
+                if st.button("👎 No", key=f"down_{row['city']}_{i}"):
+                    save_feedback(row["city"], "down")
+                    st.success("Thanks for your feedback!")
+
+            st.markdown("---")
 
 # Footer
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center; color: gray;'>
-    <small>AI Cultural Tourism Engine • Week 3 Capstone Project</small>
+    <small>AI Cultural Tourism Engine • Week 3 Capstone 2.5-flashject</small>
 </div>
 """, unsafe_allow_html=True)
