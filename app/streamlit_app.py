@@ -5,6 +5,9 @@ import google.generativeai as genai
 from datetime import datetime
 import os
 import hashlib
+import firebase_admin
+from firebase_admin import credentials, firestore
+import json
 
 # =========================
 # CONFIG
@@ -19,6 +22,43 @@ if 'ranked_results' not in st.session_state:
     st.session_state.ranked_results = None
 if 'user_input' not in st.session_state:
     st.session_state.user_input = None
+
+# -------------------------
+# Firebase setup
+# -------------------------
+FIREBASE_AVAILABLE = False
+
+def initialize_firebase():
+    """Initialize Firebase with proper error handling"""
+    global FIREBASE_AVAILABLE
+    
+    try:
+        # Check if already initialized
+        if firebase_admin._apps:
+            FIREBASE_AVAILABLE = True
+            return firestore.client()
+        
+        # Get Firebase credentials from secrets
+        if "FIREBASE_CREDENTIALS" not in st.secrets:
+            st.warning("Firebase credentials not found. Recommendations won't be saved.")
+            return None
+        
+        # Parse the credentials JSON
+        firebase_creds = dict(st.secrets["FIREBASE_CREDENTIALS"])
+        
+        # Initialize Firebase
+        cred = credentials.Certificate(firebase_creds)
+        firebase_admin.initialize_app(cred)
+        
+        FIREBASE_AVAILABLE = True
+        return firestore.client()
+        
+    except Exception as e:
+        st.warning(f"Firebase initialization failed: {str(e)}")
+        return None
+
+# Initialize Firebase
+db = initialize_firebase()
 
 # -------------------------
 # Gemini setup with better error handling
@@ -47,7 +87,7 @@ def initialize_gemini():
         genai.configure(api_key=api_key)
         
         # Test the connection with a simple prompt
-        model = genai.GenerativeModel("gemini-2.5-flash")  # Using flash for faster responses
+        model = genai.GenerativeModel("gemini-2.5-flash")
         response = model.generate_content("Say 'OK' if you can read this.")
         
         if response and response.text:
@@ -84,6 +124,15 @@ with st.sidebar:
             ```
             5. Get your API key from: https://aistudio.google.com/app/apikey
             """)
+    
+    st.markdown("---")
+    st.subheader("🔥 Firebase Status")
+    if FIREBASE_AVAILABLE:
+        st.success("✅ Firebase Connected")
+        st.caption("Recommendations are being saved")
+    else:
+        st.warning("⚠️ Firebase Unavailable")
+        st.caption("Recommendations won't be saved")
 
 # =========================
 # LOAD DATA
@@ -161,6 +210,57 @@ def rank_cities(df, user, patterns):
     )
 
     return df.sort_values("final_score", ascending=False)
+
+# =========================
+# FIREBASE FUNCTIONS
+# =========================
+def save_to_firebase(user_input, ranked_results):
+    """Save recommendations to Firebase for Week 4 itinerary generation"""
+    if not FIREBASE_AVAILABLE or db is None:
+        return None
+    
+    try:
+        # Prepare data for Firebase
+        recommendations = []
+        for _, row in ranked_results.iterrows():
+            recommendations.append({
+                "city": row["city"],
+                "country": row["country"],
+                "continent": row["continent"],
+                "rating": float(row["avg_rating"]),
+                "match_score": float(row["final_score"]),
+                "budget_level": row["budget_level"],
+                "ideal_duration": int(row["ideal_duration_days"]),
+                "description": row["description"],
+                "culture_score": float(row.get("culture_score", 0)),
+                "adventure_score": float(row.get("adventure_score", 0)),
+                "nature_score": float(row.get("nature_score", 0)),
+                "beach_score": float(row.get("beach_score", 0))
+            })
+        
+        # Create document data
+        doc_data = {
+            "timestamp": firestore.SERVER_TIMESTAMP,
+            "user_preferences": {
+                "age": user_input["age"],
+                "interest": user_input["interest"],
+                "duration": user_input["duration"],
+                "weather": user_input["weather"],
+                "season": user_input["season"],
+                "budget": user_input["budget"]
+            },
+            "recommendations": recommendations,
+            "total_recommendations": len(recommendations)
+        }
+        
+        # Add to Firestore
+        doc_ref = db.collection("tourism_recommendations").add(doc_data)
+        
+        return doc_ref[1].id  # Return document ID
+        
+    except Exception as e:
+        st.error(f"Failed to save to Firebase: {e}")
+        return None
 
 # =========================
 # GEMINI FUNCTIONS (IMPROVED)
@@ -257,6 +357,17 @@ def save_feedback(city, feedback):
 
     df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
     df.to_csv(path, index=False)
+    
+    # Also save to Firebase if available
+    if FIREBASE_AVAILABLE and db is not None:
+        try:
+            db.collection("user_feedback").add({
+                "city": city,
+                "feedback": feedback,
+                "timestamp": firestore.SERVER_TIMESTAMP
+            })
+        except:
+            pass  # Silently fail if Firebase save doesn't work
 
 # =========================
 # IMAGE (STABLE)
@@ -313,6 +424,14 @@ if submitted:
         # Store results in session state
         st.session_state.ranked_results = ranked
         st.session_state.user_input = user_input
+        
+        # Save to Firebase
+        with st.spinner("Saving recommendations..."):
+            doc_id = save_to_firebase(user_input, ranked)
+            if doc_id:
+                st.success(f"✅ Recommendations saved! (ID: {doc_id[:8]}...)")
+                # Store doc_id for later use
+                st.session_state.firebase_doc_id = doc_id
 
 # Display results from session state (persists across reruns)
 if st.session_state.ranked_results is not None:
@@ -322,6 +441,11 @@ if st.session_state.ranked_results is not None:
     interest = user_input["interest"]
     
     st.success(f"✨ Found {len(ranked)} perfect destinations for you!")
+    
+    # Show Firebase save status
+    if hasattr(st.session_state, 'firebase_doc_id'):
+        st.info(f"💾 Saved to database for itinerary generation (ID: {st.session_state.firebase_doc_id[:8]}...)")
+    
     st.markdown("---")
 
     for i, (_, row) in enumerate(ranked.iterrows(), 1):
