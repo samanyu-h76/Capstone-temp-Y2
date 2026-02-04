@@ -8,6 +8,7 @@ import hashlib
 import firebase_admin
 from firebase_admin import credentials, firestore
 import json
+import uuid
 
 # =========================
 # CONFIG
@@ -17,11 +18,16 @@ st.set_page_config(
     layout="wide"
 )
 
-# Initialize session state for storing results
+# Initialize session state
 if 'ranked_results' not in st.session_state:
     st.session_state.ranked_results = None
 if 'user_input' not in st.session_state:
     st.session_state.user_input = None
+if 'session_id' not in st.session_state:
+    # Generate unique session ID when app starts
+    st.session_state.session_id = str(uuid.uuid4())
+if 'firebase_doc_id' not in st.session_state:
+    st.session_state.firebase_doc_id = None
 
 # -------------------------
 # Firebase setup
@@ -43,8 +49,12 @@ def initialize_firebase():
             st.warning("Firebase credentials not found. Recommendations won't be saved.")
             return None
         
-        # Parse the credentials JSON
+        # Parse the credentials from TOML
         firebase_creds = dict(st.secrets["FIREBASE_CREDENTIALS"])
+        
+        # Handle the private_key: TOML multiline strings preserve newlines
+        if "private_key" in firebase_creds:
+            firebase_creds["private_key"] = str(firebase_creds["private_key"])
         
         # Initialize Firebase
         cred = credentials.Certificate(firebase_creds)
@@ -61,7 +71,7 @@ def initialize_firebase():
 db = initialize_firebase()
 
 # -------------------------
-# Gemini setup with better error handling
+# Gemini setup
 # -------------------------
 GEMINI_AVAILABLE = False
 gemini_error_message = ""
@@ -71,22 +81,18 @@ def initialize_gemini():
     global GEMINI_AVAILABLE, gemini_error_message
     
     try:
-        # Check if API key exists
         if "GEMINI_API_KEY" not in st.secrets:
             gemini_error_message = "GEMINI_API_KEY not found in secrets"
             return False
         
         api_key = st.secrets["GEMINI_API_KEY"]
         
-        # Validate API key format
         if not api_key or len(api_key) < 10:
             gemini_error_message = "Invalid API key format"
             return False
         
-        # Configure Gemini
         genai.configure(api_key=api_key)
         
-        # Test the connection with a simple prompt
         model = genai.GenerativeModel("gemini-2.5-flash")
         response = model.generate_content("Say 'OK' if you can read this.")
         
@@ -101,11 +107,16 @@ def initialize_gemini():
         gemini_error_message = f"Gemini initialization error: {str(e)}"
         return False
 
-# Initialize Gemini
 initialize_gemini()
 
 # Show status in sidebar
 with st.sidebar:
+    st.subheader("🔑 Session Info")
+    st.code(f"Session ID: {st.session_state.session_id[:8]}...")
+    if st.session_state.firebase_doc_id:
+        st.success(f"✅ Saved: {st.session_state.firebase_doc_id[:8]}...")
+    
+    st.markdown("---")
     st.subheader("🤖 AI Status")
     if GEMINI_AVAILABLE:
         st.success("✅ Gemini API Connected")
@@ -113,26 +124,22 @@ with st.sidebar:
         st.error("❌ Gemini API Unavailable")
         with st.expander("Error Details"):
             st.write(gemini_error_message)
-            st.info("""
-            **To fix this:**
-            1. Go to your Streamlit Cloud dashboard
-            2. Click on your app settings
-            3. Navigate to 'Secrets'
-            4. Add:
-            ```
-            GEMINI_API_KEY = "your-api-key-here"
-            ```
-            5. Get your API key from: https://aistudio.google.com/app/apikey
-            """)
     
     st.markdown("---")
     st.subheader("🔥 Firebase Status")
     if FIREBASE_AVAILABLE:
         st.success("✅ Firebase Connected")
-        st.caption("Recommendations are being saved")
     else:
         st.warning("⚠️ Firebase Unavailable")
-        st.caption("Recommendations won't be saved")
+    
+    # Reset session button
+    st.markdown("---")
+    if st.button("🔄 Start New Session", help="Clear current recommendations and start fresh"):
+        st.session_state.ranked_results = None
+        st.session_state.user_input = None
+        st.session_state.session_id = str(uuid.uuid4())
+        st.session_state.firebase_doc_id = None
+        st.rerun()
 
 # =========================
 # LOAD DATA
@@ -214,8 +221,8 @@ def rank_cities(df, user, patterns):
 # =========================
 # FIREBASE FUNCTIONS
 # =========================
-def save_to_firebase(user_input, ranked_results):
-    """Save recommendations to Firebase for Week 4 itinerary generation"""
+def save_to_firebase(user_input, ranked_results, session_id):
+    """Save recommendations to Firebase with session tracking"""
     if not FIREBASE_AVAILABLE or db is None:
         return None
     
@@ -238,8 +245,9 @@ def save_to_firebase(user_input, ranked_results):
                 "beach_score": float(row.get("beach_score", 0))
             })
         
-        # Create document data
+        # Create document data with session_id
         doc_data = {
+            "session_id": session_id,  # Track session
             "timestamp": firestore.SERVER_TIMESTAMP,
             "user_preferences": {
                 "age": user_input["age"],
@@ -250,7 +258,8 @@ def save_to_firebase(user_input, ranked_results):
                 "budget": user_input["budget"]
             },
             "recommendations": recommendations,
-            "total_recommendations": len(recommendations)
+            "total_recommendations": len(recommendations),
+            "itinerary_generated": False  # Track if itinerary was generated
         }
         
         # Add to Firestore
@@ -262,8 +271,29 @@ def save_to_firebase(user_input, ranked_results):
         st.error(f"Failed to save to Firebase: {e}")
         return None
 
+def get_session_recommendations(session_id):
+    """Get recommendations for current session"""
+    if not FIREBASE_AVAILABLE or db is None:
+        return None
+    
+    try:
+        docs = db.collection("tourism_recommendations") \
+            .where("session_id", "==", session_id) \
+            .order_by("timestamp", direction=firestore.Query.DESCENDING) \
+            .limit(1) \
+            .stream()
+        
+        for doc in docs:
+            return doc.to_dict()
+        
+        return None
+        
+    except Exception as e:
+        st.error(f"Failed to retrieve session data: {e}")
+        return None
+
 # =========================
-# GEMINI FUNCTIONS (IMPROVED)
+# GEMINI FUNCTIONS
 # =========================
 def gemini_weather_advice(city, climate, season, interest):
     """Generate weather-based travel advice using Gemini"""
@@ -362,15 +392,16 @@ def save_feedback(city, feedback):
     if FIREBASE_AVAILABLE and db is not None:
         try:
             db.collection("user_feedback").add({
+                "session_id": st.session_state.session_id,
                 "city": city,
                 "feedback": feedback,
                 "timestamp": firestore.SERVER_TIMESTAMP
             })
         except:
-            pass  # Silently fail if Firebase save doesn't work
+            pass
 
 # =========================
-# IMAGE (STABLE)
+# IMAGE
 # =========================
 def get_city_image(city):
     city_hash = int(hashlib.md5(city.encode()).hexdigest(), 16)
@@ -425,15 +456,14 @@ if submitted:
         st.session_state.ranked_results = ranked
         st.session_state.user_input = user_input
         
-        # Save to Firebase
+        # Save to Firebase with session ID
         with st.spinner("Saving recommendations..."):
-            doc_id = save_to_firebase(user_input, ranked)
+            doc_id = save_to_firebase(user_input, ranked, st.session_state.session_id)
             if doc_id:
-                st.success(f"✅ Recommendations saved! (ID: {doc_id[:8]}...)")
-                # Store doc_id for later use
                 st.session_state.firebase_doc_id = doc_id
+                st.success(f"✅ Recommendations saved for this session!")
 
-# Display results from session state (persists across reruns)
+# Display results from session state
 if st.session_state.ranked_results is not None:
     ranked = st.session_state.ranked_results
     user_input = st.session_state.user_input
@@ -442,9 +472,13 @@ if st.session_state.ranked_results is not None:
     
     st.success(f"✨ Found {len(ranked)} perfect destinations for you!")
     
-    # Show Firebase save status
-    if hasattr(st.session_state, 'firebase_doc_id'):
-        st.info(f"💾 Saved to database for itinerary generation (ID: {st.session_state.firebase_doc_id[:8]}...)")
+    # Show session info
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.info(f"💾 Session ID: `{st.session_state.session_id[:8]}...` - Use this for itinerary generation!")
+    with col2:
+        if st.button("📋 Generate Itinerary", type="primary", use_container_width=True):
+            st.info("🚀 Itinerary generator coming in Week 4! This will use your current session's recommendations.")
     
     st.markdown("---")
 
