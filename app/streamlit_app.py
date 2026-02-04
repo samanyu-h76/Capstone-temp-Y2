@@ -28,6 +28,10 @@ if 'session_id' not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
 if 'firebase_doc_id' not in st.session_state:
     st.session_state.firebase_doc_id = None
+if 'show_itinerary_form' not in st.session_state:
+    st.session_state.show_itinerary_form = False
+if 'selected_itinerary_city' not in st.session_state:
+    st.session_state.selected_itinerary_city = None
 
 # -------------------------
 # Firebase setup
@@ -477,8 +481,8 @@ if st.session_state.ranked_results is not None:
     with col1:
         st.info(f"💾 Session ID: `{st.session_state.session_id[:8]}...` - Use this for itinerary generation!")
     with col2:
-        if st.button("📋 Generate Itinerary", type="primary", use_container_width=True):
-            st.info("🚀 Itinerary generator coming in Week 4! This will use your current session's recommendations.")
+        if st.button("📋 Generate Itinerary", type="primary", use_container_width=True, key="show_itinerary_form"):
+            st.session_state.show_itinerary_form = True
     
     st.markdown("---")
 
@@ -535,10 +539,130 @@ if st.session_state.ranked_results is not None:
 
             st.markdown("---")
 
+# =========================
+# ITINERARY GENERATOR
+# =========================
+if st.session_state.show_itinerary_form and st.session_state.ranked_results is not None:
+    st.markdown("---")
+    st.subheader("📋 Itinerary Generator")
+    
+    ranked = st.session_state.ranked_results
+    user_input = st.session_state.user_input
+    
+    # City selector for itinerary
+    cities = [row['city'] for _, row in ranked.iterrows()]
+    
+    selected_city = st.selectbox(
+        "Select a city to generate itinerary:",
+        cities,
+        key="itinerary_city_selector",
+        help="Choose one of your recommended cities"
+    )
+    
+    # Find selected city data
+    city_row = ranked[ranked['city'] == selected_city].iloc[0]
+    
+    st.markdown("---")
+    
+    # Display city details
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.subheader(f"📍 {city_row['city']}, {city_row['country']}")
+        st.write(f"**Rating:** ⭐ {city_row['avg_rating']}/5.0")
+        st.write(f"**Match Score:** 🎯 {city_row['final_score']:.2f}")
+        st.write(f"**Ideal Duration:** {city_row['ideal_duration_days']} days")
+        
+        st.markdown("**Description:**")
+        st.write(city_row["description"])
+    
+    with col2:
+        st.metric("Culture Score", f"{city_row.get('culture_score', 0):.1f}/10")
+        st.metric("Adventure Score", f"{city_row.get('adventure_score', 0):.1f}/10")
+        st.metric("Nature Score", f"{city_row.get('nature_score', 0):.1f}/10")
+        st.metric("Beach Score", f"{city_row.get('beach_score', 0):.1f}/10")
+    
+    st.markdown("---")
+    
+    # Itinerary generation
+    st.subheader("📅 Day-by-Day Itinerary")
+    
+    duration = st.slider(
+        "How many days?",
+        min_value=1,
+        max_value=14,
+        value=min(user_input['duration'], int(city_row['ideal_duration_days'])),
+        key="itinerary_duration"
+    )
+    
+    if st.button("🚀 Generate Itinerary", type="primary", use_container_width=True, key="generate_itinerary_btn"):
+        st.info("🔨 Generating personalized itinerary using Gemini AI...")
+        
+        try:
+            if GEMINI_AVAILABLE:
+                model = genai.GenerativeModel("gemini-2.5-flash")
+                
+                prompt = f"""Create a detailed {duration}-day itinerary for {selected_city}, {city_row['country']}.
+
+Traveler Profile:
+- Interest: {user_input['interest']}
+- Budget Level: {user_input['budget']}
+- Season: {user_input['season']}
+- Weather Preference: {user_input['weather']}
+- Age: {user_input['age']}
+
+City Information:
+- Culture Score: {city_row.get('culture_score', 0)}/10
+- Adventure Score: {city_row.get('adventure_score', 0)}/10
+- Nature Score: {city_row.get('nature_score', 0)}/10
+- Beach Score: {city_row.get('beach_score', 0)}/10
+
+Create a day-by-day itinerary with:
+1. Morning activities
+2. Afternoon activities
+3. Evening activities
+4. Budget-appropriate dining suggestions
+5. Practical travel tips
+
+Format each day clearly with times and activity types that match the traveler's interests and budget."""
+
+                response = model.generate_content(
+                    prompt,
+                    generation_config=genai.types.GenerationConfig(
+                        temperature=0.8,
+                        max_output_tokens=2000,
+                    )
+                )
+                
+                if response and response.text:
+                    st.markdown("### ✨ Your Personalized Itinerary")
+                    st.markdown(response.text)
+                    
+                    # Save itinerary to Firebase
+                    if FIREBASE_AVAILABLE and db is not None and st.session_state.firebase_doc_id:
+                        try:
+                            db.collection("tourism_recommendations").document(st.session_state.firebase_doc_id).update({
+                                "itinerary_generated": True,
+                                "itinerary_city": selected_city,
+                                "itinerary_duration": duration,
+                                "itinerary_content": response.text,
+                                "itinerary_timestamp": firestore.SERVER_TIMESTAMP
+                            })
+                            st.success("✅ Itinerary saved to your session!")
+                        except Exception as e:
+                            st.warning(f"Could not save itinerary: {e}")
+                else:
+                    st.error("Failed to generate itinerary. Please try again.")
+            else:
+                st.error("Gemini AI is not available. Please check your API key.")
+                
+        except Exception as e:
+            st.error(f"Error generating itinerary: {str(e)}")
+
 # Footer
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center; color: gray;'>
-    <small>AI Cultural Tourism Engine • Week 3 Capstone Project</small>
+    <small>AI Cultural Tourism Engine • Week 3 & 4 Features</small>
 </div>
 """, unsafe_allow_html=True)
