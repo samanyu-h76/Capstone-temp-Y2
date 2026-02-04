@@ -167,7 +167,7 @@ def gemini_weather_advice(city, climate, season, interest):
         return fallback
 
     try:
-        model = genai.GenerativeModel("models/gemini-2.5-flash")
+        model = genai.GenerativeModel("gemini-2.5-flash")
         
         prompt = f"""You are a helpful travel assistant. 
 
@@ -206,7 +206,7 @@ def gemini_translate(text, language):
         return text
 
     try:
-        model = genai.GenerativeModel("models/gemini-2.5-flash")
+        model = genai.GenerativeModel("gemini-2.5-flash")
         
         prompt = f"""Translate the following text to {language}. 
 Only provide the translation, nothing else.
