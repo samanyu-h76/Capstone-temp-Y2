@@ -481,7 +481,7 @@ if st.session_state.ranked_results is not None:
     with col1:
         st.info(f"💾 Session ID: `{st.session_state.session_id[:8]}...` - Use this for itinerary generation!")
     with col2:
-        if st.button("📋 Generate Itinerary", type="primary", use_container_width=True, key="show_itinerary_form"):
+        if st.button("📋 Generate Itinerary", type="primary", use_container_width=True, key="itinerary_btn"):
             st.session_state.show_itinerary_form = True
     
     st.markdown("---")
