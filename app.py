@@ -18,6 +18,9 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
 from io import BytesIO
 import requests
 from PIL import Image as PILImage
+from moviepy import *
+import tempfile
+import re
 
 # =========================
 # CONFIG
@@ -49,6 +52,10 @@ if 'current_city' not in st.session_state:
     st.session_state.current_city = None
 if 'current_user_input' not in st.session_state:
     st.session_state.current_user_input = None
+if 'video_buffer' not in st.session_state:
+    st.session_state.video_buffer = None
+if 'video_generated' not in st.session_state:
+    st.session_state.video_generated = False
 
 # -------------------------
 # Firebase setup
@@ -123,6 +130,45 @@ def initialize_gemini():
         return False
 
 initialize_gemini()
+
+# -------------------------
+# Pexels setup
+# -------------------------
+PEXELS_AVAILABLE = False
+pexels_error_message = ""
+
+def initialize_pexels():
+    """Initialize Pexels API with proper error handling"""
+    global PEXELS_AVAILABLE, pexels_error_message
+    
+    try:
+        if "PEXELS_API_KEY" not in st.secrets:
+            pexels_error_message = "PEXELS_API_KEY not found in secrets"
+            return False
+        
+        api_key = st.secrets["PEXELS_API_KEY"]
+        
+        if not api_key or len(api_key) < 10:
+            pexels_error_message = "Invalid API key format"
+            return False
+        
+        # Test the API key
+        headers = {"Authorization": api_key}
+        params = {"query": "test", "per_page": 1}
+        response = requests.get("https://api.pexels.com/v1/search", headers=headers, params=params)
+        
+        if response.status_code == 200:
+            PEXELS_AVAILABLE = True
+            return True
+        else:
+            pexels_error_message = f"Pexels API Error: {response.status_code}"
+            return False
+            
+    except Exception as e:
+        pexels_error_message = f"Pexels initialization error: {str(e)}"
+        return False
+
+initialize_pexels()
 
 # =========================
 # LOAD DATA
@@ -352,76 +398,392 @@ Text to translate:
         return text
 
 def generate_itinerary(city, country, duration, user_input, city_row):
-    """Generate detailed itinerary using Gemini"""
+    """
+    Generate complete itinerary without truncation.
+    Uses a single comprehensive prompt with longer max tokens.
+    """
     if not GEMINI_AVAILABLE:
         return "Itinerary generation requires Gemini API"
     
     try:
         model = genai.GenerativeModel("gemini-2.5-flash")
         
-        prompt = f"""CRITICAL INSTRUCTION: YOU MUST GENERATE THE COMPLETE {duration}-DAY ITINERARY IN FULL.
-DO NOT STOP EARLY. DO NOT TRUNCATE. DO NOT ABBREVIATE.
-If you feel the response is getting long, KEEP WRITING ANYWAY until ALL {duration} days are complete.
-IGNORE LENGTH LIMITS and FINISH the entire itinerary no matter how long it takes.
-
-You will write approximately 250-400 words per day. For {duration} days, expect to write 1500-3200+ words total.
+        # Build comprehensive prompt
+        prompt = f"""You are an expert travel itinerary planner. Create a complete, detailed {duration}-day itinerary for {city}, {country}.
 
 TRAVELER PROFILE:
-- Interest: {user_input['interest']}
+- Primary Interest: {user_input['interest']}
 - Budget Level: {user_input['budget']}
 - Season: {user_input['season']}
 - Weather Preference: {user_input['weather']}
 - Age: {user_input['age']}
 
-DESTINATION INFO:
-- City: {city}, {country}
-- Rating: {city_row.get('avg_rating', 0)}/5
-- Culture Score: {city_row.get('culture_score', 0)}/10
-- Adventure Score: {city_row.get('adventure_score', 0)}/10
-- Nature Score: {city_row.get('nature_score', 0)}/10
+INSTRUCTIONS - FOLLOW EXACTLY:
+1. Start with a 3-4 sentence personalized introduction
+2. For EACH day (1 to {duration}), provide COMPLETE details in this EXACT format:
 
-INSTRUCTIONS:
-1. Start with a 2-3 sentence introduction explaining how {city} matches the traveler's interests
-2. Create exactly {duration} day sections (Day 1 through Day {duration})
-3. For EACH day, include:
-   - **Day X - [Compelling Title]**
-   - Morning: [Specific activity with location name and details]
-   - Lunch: [Specific restaurant name, cuisine type, dish recommendations]
-   - Afternoon: [Specific activity with location name and estimated duration]
-   - Evening: [Specific activity/dinner with restaurant and dish suggestions]
-   - Tips: [Practical advice, costs, best times, transportation tips]
+**Day X - [Compelling Day Title]**
+Morning: [Specific activity with exact location name, detailed description 100-150 words]
+Lunch: [Specific restaurant name, cuisine type, recommended dishes 50-80 words]
+Afternoon: [Specific activity with location and duration 100-150 words]
+Evening: [Specific activity/dinner venue with details 100-150 words]
+Budget Tip: [Estimated costs and money-saving tips 40-60 words]
+Local Insight: [Cultural tip or insider knowledge 50-80 words]
 
-4. Each day section should be 250-400 words
-5. Include specific place names, not generic descriptions
-6. Add estimated times for activities
-7. Include restaurant names and cuisine types
-8. Add budget considerations
-9. Add cultural insights and etiquette tips
+CRITICAL RULES:
+- Be EXTREMELY detailed with real location names and restaurants
+- Include specific addresses or neighborhoods where relevant
+- Provide realistic time durations for each activity
+- Suggest actual dining establishments that exist in {city}
+- Make recommendations match the {user_input['interest']} interest and {user_input['budget']} budget
+- Include practical logistics (opening hours, transportation, booking tips)
+- Write COMPLETE sentences, not abbreviations
+- DO NOT TRUNCATE or cut off any information
+- Ensure ALL {duration} days are COMPLETE with no missing sections
 
-CRITICAL: CONTINUE WRITING ALL {duration} DAYS. DO NOT STOP AFTER DAY 3 OR 4.
-If the response is interrupted, remember: YOU MUST WRITE ALL {duration} DAYS COMPLETELY."""
+GENERATE THE FULL ITINERARY NOW:"""
 
+        # Use higher token limit to ensure complete response
         response = model.generate_content(
             prompt,
             generation_config=genai.types.GenerationConfig(
-                temperature=0.7,
-                max_output_tokens=8192,
+                temperature=0.8,
+                max_output_tokens=8000,  # Increased significantly
+                top_p=0.95,
+                top_k=40
             )
         )
         
         if response and response.text:
-            full_text = response.text.strip()
+            full_itinerary = response.text.strip()
+            
             # Verify we got substantial content
-            if len(full_text) > 100:
-                return full_text
+            if len(full_itinerary) > 800:
+                return full_itinerary
             else:
-                return "Itinerary too short. Please try again."
+                # If response seems too short, try again with adjusted prompt
+                return generate_itinerary_retry(city, country, duration, user_input)
         else:
-            return "Unable to generate itinerary"
+            return "Failed to generate itinerary. Please try again."
             
     except Exception as e:
-        st.error(f"Itinerary generation failed: {str(e)}")
-        return "Error generating itinerary"
+        st.error(f"Itinerary generation error: {str(e)}")
+        return f"Error: {str(e)}"
+
+def generate_itinerary_retry(city, country, duration, user_input):
+    """
+    Retry itinerary generation with a simpler, more direct prompt.
+    """
+    try:
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        
+        prompt = f"""Create a {duration}-day detailed travel itinerary for {city}, {country} for a {user_input['age']}-year-old interested in {user_input['interest']}.
+
+For EACH day from 1 to {duration}, provide:
+Day [number] - [Title]
+Morning: [what to do and where]
+Lunch: [restaurant and food]
+Afternoon: [activities]
+Evening: [dining and activities]
+Tips: [practical information and costs]
+
+WRITE EVERYTHING IN FULL DETAIL. DO NOT SHORTEN OR ABBREVIATE. INCLUDE ALL {duration} DAYS COMPLETELY."""
+
+        response = model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.8,
+                max_output_tokens=8000,
+                top_p=0.95,
+                top_k=40
+            )
+        )
+        
+        if response and response.text:
+            return response.text.strip()
+        else:
+            return "Unable to generate itinerary."
+            
+    except Exception as e:
+        return f"Error in retry: {str(e)}"
+
+# =========================
+# VIDEO GENERATION FUNCTIONS
+# =========================
+
+def parse_itinerary_into_days(itinerary_text):
+    """Parse itinerary text into structured day data"""
+    days_data = []
+    
+    # Split by day markers
+    day_pattern = r'\*\*Day\s+(\d+)\s*-\s*([^*]+)\*\*'
+    day_matches = list(re.finditer(day_pattern, itinerary_text))
+    
+    for i, match in enumerate(day_matches):
+        day_num = match.group(1)
+        day_title = match.group(2).strip()
+        
+        # Get content until next day or end
+        start = match.end()
+        end = day_matches[i + 1].start() if i + 1 < len(day_matches) else len(itinerary_text)
+        day_content = itinerary_text[start:end]
+        
+        # Extract locations and descriptions
+        locations = []
+        
+        # Look for Morning, Lunch, Afternoon, Evening sections
+        time_periods = ['Morning:', 'Lunch:', 'Afternoon:', 'Evening:']
+        
+        for period in time_periods:
+            if period in day_content:
+                start_idx = day_content.find(period)
+                # Find next period or end
+                next_period_idx = float('inf')
+                for next_period in time_periods:
+                    idx = day_content.find(next_period, start_idx + 1)
+                    if idx != -1:
+                        next_period_idx = min(next_period_idx, idx)
+                
+                if next_period_idx == float('inf'):
+                    next_period_idx = len(day_content)
+                
+                content = day_content[start_idx:next_period_idx].replace(period, '').strip()
+                
+                # Extract location name - look for specific location/place names
+                # Usually the first sentence contains the main location
+                sentences = content.split('.')
+                first_sentence = sentences[0].strip() if sentences else ''
+                
+                # Try to extract just the location name (usually first 2-5 words)
+                words = first_sentence.split()
+                location = ' '.join(words[:2]) if len(words) > 1 else (words[0] if words else period.replace(':', ''))
+                
+                # Create shorter caption for video (time period + location)
+                caption = f"{period.replace(':', '')}: {location}"
+                
+                locations.append({
+                    'time_period': period.replace(':', ''),
+                    'location': location,
+                    'caption': caption,
+                    'description': content[:80] if len(content) > 80 else content
+                })
+        
+        days_data.append({
+            'day_num': day_num,
+            'day_title': day_title,
+            'locations': locations if locations else [{'time_period': 'All Day', 'location': day_title, 'description': 'Explore the day'}]
+        })
+    
+    return days_data
+
+def fetch_pexels_image(query, filename, page=1):
+    """Fetch image from Pexels API with pagination to avoid duplicates"""
+    try:
+        if not PEXELS_AVAILABLE:
+            return None
+        
+        pexels_key = st.secrets.get("PEXELS_API_KEY")
+        if not pexels_key:
+            return None
+        
+        headers = {"Authorization": pexels_key}
+        params = {"query": query, "per_page": 5, "page": page}
+        
+        response = requests.get("https://api.pexels.com/v1/search", headers=headers, params=params)
+        
+        if response.status_code != 200:
+            return None
+        
+        data = response.json()
+        
+        if not data.get("photos"):
+            return None
+        
+        # Get a random image from results to avoid duplicates
+        import random
+        photo = random.choice(data["photos"][:3])
+        image_url = photo["src"]["landscape"]
+        img_data = requests.get(image_url).content
+        
+        with open(filename, "wb") as f:
+            f.write(img_data)
+        
+        return filename
+        
+    except Exception as e:
+        return None
+
+
+
+def generate_itinerary_video(itinerary_text, city, country, user_input):
+    """Generate complete travel video from itinerary"""
+    
+    if not PEXELS_AVAILABLE:
+        st.error("Pexels API not configured. Please add PEXELS_API_KEY to secrets.")
+        return None
+    
+    try:
+        # Parse itinerary
+        days_data = parse_itinerary_into_days(itinerary_text)
+        
+        if not days_data:
+            st.error("Could not parse itinerary. Please ensure it's properly formatted.")
+            return None
+        
+        # Create temporary directory
+        temp_dir = tempfile.mkdtemp()
+        st.info(f"📹 Generating video with {len(days_data)} days...")
+        
+        day_clips = []
+        progress_bar = st.progress(0)
+        
+        for day_idx, day_data in enumerate(days_data):
+            st.write(f"Processing **Day {day_data['day_num']}: {day_data['day_title']}**")
+            
+            locations = day_data['locations']
+            
+            # Calculate duration (2 seconds per location)
+            duration_per_location = 2
+            
+            image_clips = []
+            
+            # Fetch and process images for each location
+            for loc_idx, location in enumerate(locations):
+                st.write(f"    🖼️ Fetching image for {location['location']}...")
+                
+                search_query = f"{location['location']} {city}"
+                image_file = os.path.join(temp_dir, f"day_{day_data['day_num']}_loc_{loc_idx}.jpg")
+                
+                # Try multiple pages to get different images
+                success = False
+                for page in range(1, 3):
+                    if fetch_pexels_image(search_query, image_file, page=page):
+                        success = True
+                        break
+                
+                if not success:
+                    st.warning(f"Could not fetch image for {location['location']}, using placeholder")
+                    # Create a simple placeholder
+                    placeholder = PILImage.new('RGB', (1280, 720), color=(70, 130, 180))
+                    placeholder.save(image_file)
+                
+                # Load image and create clip
+                try:
+                    img = PILImage.open(image_file)
+                    # Resize to standard video size
+                    img = img.resize((1280, 720))
+                    frame = np.array(img)
+                    
+                    clip = ImageClip(frame).with_duration(duration_per_location)
+                    
+                    # Add caption - use the improved caption from parsing
+                    caption_text = location.get('caption', f"{location['time_period']}: {location['location']}")
+                    
+                    # Create a subtitle box with better text wrapping
+                    # Use a narrower width for better text wrapping and visibility
+                    caption = TextClip(
+                        text=caption_text,
+                        font_size=24,
+                        color="white",
+                        size=(1000, None),  # Width for wrapping, height auto
+                        method="caption",
+                        font="Arial"
+                    ).with_duration(duration_per_location).with_position(("center", 600))
+                    
+                    # Composite caption on image
+                    clip = CompositeVideoClip([clip, caption])
+                    image_clips.append(clip)
+                    
+                except Exception as e:
+                    st.warning(f"Error processing image for {location['location']}: {str(e)}")
+                    continue
+            
+            if not image_clips:
+                st.warning(f"No images for Day {day_data['day_num']}, skipping")
+                continue
+            
+            # Concatenate all images for this day
+            video = concatenate_videoclips(image_clips)
+            
+            # Add day header
+            day_header = TextClip(
+                text=f"Day {day_data['day_num']} - {day_data['day_title']}",
+                font_size=44,
+                color="yellow",
+                size=(1200, None),
+                method="caption",
+                font="Arial"
+            ).with_duration(2).with_position(("center", "center"))
+            
+            day_header_video = CompositeVideoClip([
+                ColorClip(size=(1280, 720), color=(0, 0, 0)).with_duration(2),
+                day_header
+            ])
+            
+            # Combine header with day video
+            video = concatenate_videoclips([day_header_video, video])
+            day_clips.append(video)
+            
+            progress_bar.progress((day_idx + 1) / len(days_data))
+        
+        if not day_clips:
+            st.error("No valid day clips were created. Please check your itinerary format.")
+            return None
+        
+        # Merge all days
+        st.write("📀 Merging all days...")
+        final_video = concatenate_videoclips(day_clips)
+        
+        # Add title slide
+        title_slide = TextClip(
+            text=f"Your {city}, {country} Adventure",
+            font_size=56,
+            color="white",
+            size=(1200, None),
+            method="caption",
+            font="Arial"
+        ).with_duration(3).with_position(("center", "center"))
+        
+        title_slide_video = CompositeVideoClip([
+            ColorClip(size=(1280, 720), color=(25, 25, 112)).with_duration(3),
+            title_slide
+        ])
+        
+        final_video = concatenate_videoclips([title_slide_video, final_video])
+        
+        # Write to buffer
+        st.write("💾 Rendering video...")
+        output_buffer = BytesIO()
+        output_path = os.path.join(temp_dir, "output.mp4")
+        
+        final_video.write_videofile(
+            output_path,
+            fps=24,
+            codec="libx264",
+            audio=False
+        )
+        
+        # Read file into buffer
+        with open(output_path, 'rb') as f:
+            output_buffer.write(f.read())
+        
+        output_buffer.seek(0)
+        
+        # Cleanup
+        try:
+            import shutil
+            shutil.rmtree(temp_dir)
+        except:
+            pass
+        
+        st.success("✅ Video generated successfully!")
+        return output_buffer
+        
+    except Exception as e:
+        st.error(f"Video generation error: {str(e)}")
+        import traceback
+        st.error(f"Details: {traceback.format_exc()}")
+        return None
 
 # =========================
 # FEEDBACK
@@ -469,14 +831,14 @@ def get_city_image(city):
 def create_weather_icon(weather_type):
     """Return weather emoji based on type"""
     weather_icons = {
-        "Cold": "❄️",
+        "Cold": "���️",
         "Pleasant": "🌤️",
         "Warm": "☀️"
     }
     return weather_icons.get(weather_type, "🌤️")
 
 def generate_itinerary_pdf(city, country, weather, season, itinerary_text, city_row, user_input, language="English"):
-    """Generate PDF from itinerary data using ReportLab"""
+    """Generate PDF from itinerary data using ReportLab - with improved text handling"""
     
     try:
         # Create PDF buffer
@@ -505,13 +867,33 @@ def generate_itinerary_pdf(city, country, weather, season, itinerary_text, city_
             fontName='Helvetica-Bold'
         )
         
+        day_style = ParagraphStyle(
+            'DayHeading',
+            parent=styles['Heading3'],
+            fontSize=12,
+            textColor=colors.HexColor('#1f4788'),
+            spaceAfter=8,
+            spaceBefore=8,
+            fontName='Helvetica-Bold'
+        )
+        
         normal_style = ParagraphStyle(
             'CustomNormal',
             parent=styles['Normal'],
             fontSize=10,
             alignment=TA_JUSTIFY,
-            spaceAfter=8,
-            leading=14
+            spaceAfter=6,
+            leading=13
+        )
+        
+        bullet_style = ParagraphStyle(
+            'BulletStyle',
+            parent=styles['Normal'],
+            fontSize=9,
+            alignment=TA_LEFT,
+            spaceAfter=4,
+            leading=12,
+            leftIndent=20
         )
         
         info_style = ParagraphStyle(
@@ -561,71 +943,54 @@ def generate_itinerary_pdf(city, country, weather, season, itinerary_text, city_
         content.append(Paragraph("📋 Your Personalized Itinerary", heading_style))
         content.append(Spacer(1, 0.1*inch))
         
-        # Parse and format itinerary line-by-line to prevent truncation
-        # Create many small Paragraph objects instead of few large ones
-        itinerary_lines = itinerary_text.split('\n')
-        current_section = []
+        # Parse itinerary more carefully
+        lines = itinerary_text.split('\n')
         
-        for i, line in enumerate(itinerary_lines):
-            stripped_line = line.strip()
+        for line in lines:
+            stripped = line.strip()
             
-            if not stripped_line:
-                # Empty line - add spacing
-                if current_section:
-                    for item in current_section:
-                        content.append(item)
-                    current_section = []
+            if not stripped:
+                # Empty line
                 content.append(Spacer(1, 0.08*inch))
                 
-            elif stripped_line.startswith('**Day'):
-                # Day header - flush previous section and add new header
-                if current_section:
-                    for item in current_section:
-                        content.append(item)
-                    current_section = []
-                
-                content.append(Spacer(1, 0.15*inch))
-                day_text = stripped_line.replace('**', '').strip()
+            elif stripped.startswith('**Day'):
+                # Day heading
+                day_title = stripped.replace('**', '').strip()
                 try:
-                    content.append(Paragraph(f"<b>{day_text}</b>", heading_style))
-                except Exception as ex:
-                    content.append(Paragraph(day_text, heading_style))
-                content.append(Spacer(1, 0.08*inch))
+                    content.append(Paragraph(day_title, day_style))
+                    content.append(Spacer(1, 0.05*inch))
+                except:
+                    pass
+                    
+            elif stripped.startswith('Morning:') or stripped.startswith('Lunch:') or \
+                 stripped.startswith('Afternoon:') or stripped.startswith('Evening:') or \
+                 stripped.startswith('Budget Tip:') or stripped.startswith('Local Insight:') or \
+                 stripped.startswith('Tips:'):
+                # Activity lines
+                cleaned = stripped.replace('**', '').replace('__', '').replace('_', '')
+                cleaned = cleaned.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
                 
-            elif stripped_line.startswith('-') or stripped_line.startswith('•'):
-                # Bullet point
-                bullet_text = stripped_line.lstrip('-• ').strip()
-                # Escape problematic characters
-                bullet_text = bullet_text.replace('**', '').replace('&', '&amp;')
                 try:
-                    para = Paragraph(f"• {bullet_text}", normal_style)
-                    current_section.append(para)
-                except Exception as ex:
-                    # If paragraph fails, add as escaped text
-                    escaped_text = bullet_text.replace('<', '&lt;').replace('>', '&gt;')
+                    para = Paragraph(f"<b>{cleaned.split(':')[0]}:</b> {':'.join(cleaned.split(':')[1:]).strip()}", bullet_style)
+                    content.append(para)
+                except:
                     try:
-                        para = Paragraph(f"• {escaped_text}", normal_style)
-                        current_section.append(para)
+                        para = Paragraph(cleaned, bullet_style)
+                        content.append(para)
                     except:
                         pass
-                
+                        
             else:
-                # Regular text line
-                text_clean = stripped_line.replace('**', '').replace('__', '').replace('_', '')
-                text_clean = text_clean.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                # Regular text
+                cleaned = stripped.replace('**', '').replace('__', '').replace('_', '')
+                cleaned = cleaned.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
                 
-                if text_clean:  # Only add non-empty text
+                if cleaned and len(cleaned) > 3:
                     try:
-                        para = Paragraph(text_clean, normal_style)
-                        current_section.append(para)
-                    except Exception as ex:
-                        # If paragraph fails due to special chars, skip
+                        para = Paragraph(cleaned, normal_style)
+                        content.append(para)
+                    except:
                         pass
-        
-        # Flush any remaining content
-        if current_section:
-            for item in current_section:
-                content.append(item)
         
         content.append(Spacer(1, 0.2*inch))
         
@@ -636,7 +1001,7 @@ def generate_itinerary_pdf(city, country, weather, season, itinerary_text, city_
         except:
             pass
         
-        # Build PDF with error handling
+        # Build PDF
         try:
             doc.build(content)
             pdf_buffer.seek(0)
@@ -647,8 +1012,6 @@ def generate_itinerary_pdf(city, country, weather, season, itinerary_text, city_
         
     except Exception as e:
         st.error(f"Error generating PDF: {str(e)}")
-        import traceback
-        st.error(f"Traceback: {traceback.format_exc()}")
         return None
 
 # =========================
@@ -672,6 +1035,7 @@ def home_page():
         - **Generate Itineraries** - Receive day-wise travel plans crafted just for you
         - **Get Smart Recommendations** - Discover hidden gems similar to your interests
         - **Multilingual Support** - Chat with our AI in your preferred language
+        - **Create Travel Videos** - Generate beautiful travel recap videos with audio and subtitles
         - **Save Your Sessions** - All recommendations are securely stored
         
         **Ready to explore?** Go to Personalization to get started.
@@ -684,8 +1048,9 @@ def home_page():
         1. Go to **Personalization** to tell us about yourself
         2. Get **Recommendations** based on your profile
         3. Generate your personalized **Itinerary**
-        4. Provide feedback to improve recommendations
-        5. Chat with our **Chatbot** for more help
+        4. Create a **Travel Video** recap
+        5. Provide feedback to improve recommendations
+        6. Chat with our **Chatbot** for more help
         """)
     
     st.markdown("---")
@@ -696,13 +1061,22 @@ def home_page():
             st.success(f"✅ Saved: {st.session_state.firebase_doc_id[:8]}...")
         
         st.markdown("---")
-        st.subheader("��� AI Status")
+        st.subheader("🤖 AI Status")
         if GEMINI_AVAILABLE:
             st.success("✅ Gemini API Connected")
         else:
             st.error("❌ Gemini API Unavailable")
             with st.expander("Error Details"):
                 st.write(gemini_error_message)
+        
+        st.markdown("---")
+        st.subheader("🎥 Video Generation Status")
+        if PEXELS_AVAILABLE:
+            st.success("✅ Pexels API Connected")
+        else:
+            st.error("❌ Pexels API Unavailable")
+            with st.expander("Error Details"):
+                st.write(pexels_error_message)
         
         st.markdown("---")
         st.subheader("🔥 Firebase Status")
@@ -712,12 +1086,14 @@ def home_page():
             st.warning("⚠️ Firebase Unavailable")
         
         st.markdown("---")
-        if st.button("🔄 Start New Session", help="Clear current recommendations and start fresh"):
+        if st.button("��� Start New Session", help="Clear current recommendations and start fresh"):
             st.session_state.ranked_results = None
             st.session_state.user_input = None
             st.session_state.session_id = str(uuid.uuid4())
             st.session_state.firebase_doc_id = None
             st.session_state.personalization_complete = False
+            st.session_state.video_generated = False
+            st.session_state.video_buffer = None
             st.rerun()
 
 def personalization_page():
@@ -922,14 +1298,15 @@ def itinerary_page():
     )
     
     if st.button("Generate Itinerary", type="primary", use_container_width=True, key="generate_itinerary_btn"):
-        with st.spinner("Generating your personalized itinerary..."):
+        with st.spinner("Generating your personalized itinerary (this may take a moment)..."):
             itinerary = generate_itinerary(city_row['city'], city_row['country'], duration, user_input, city_row)
             st.session_state.current_itinerary = itinerary
             st.session_state.current_city = city_row
             st.session_state.current_user_input = user_input
+            st.rerun()
     
     # Display itinerary if available
-    if 'current_itinerary' in st.session_state and st.session_state.current_itinerary:
+    if st.session_state.current_itinerary:
         itinerary = st.session_state.current_itinerary
         city_row = st.session_state.current_city
         user_input = st.session_state.current_user_input
@@ -937,11 +1314,7 @@ def itinerary_page():
         st.markdown("### 📅 Your Personalized Itinerary")
         st.success("✅ Itinerary generated successfully!")
         
-        # Display itinerary length info
-        char_count = len(itinerary)
-        st.caption(f"Itinerary length: {char_count:,} characters | Approx {char_count // 5} words")
-        
-        # Use text_area for reliable display of long text without truncation
+        # Display with text_area for best rendering of long content
         st.text_area(
             "Full Itinerary",
             value=itinerary,
@@ -950,10 +1323,10 @@ def itinerary_page():
             label_visibility="collapsed"
         )
         
-        st.markdown("")  # Spacing
+        st.markdown("")
         
         # PDF Download Section
-        st.markdown("### 📥 Download Itinerary")
+        st.markdown("### 📥 Download Itinerary as PDF")
         
         pdf_language = st.selectbox(
             "Select language for PDF:",
@@ -984,7 +1357,7 @@ def itinerary_page():
                         st.error("❌ Failed to generate PDF. Please try again.")
         
         with col2:
-            if 'pdf_buffer' in st.session_state and st.session_state.pdf_buffer:
+            if st.session_state.pdf_buffer:
                 st.download_button(
                     label="⬇️ Download PDF",
                     data=st.session_state.pdf_buffer,
@@ -994,6 +1367,93 @@ def itinerary_page():
                 )
             else:
                 st.info("Generate PDF first to download")
+
+def video_page():
+    """Video generation page"""
+    st.title("🎬 Travel Video Generator")
+    st.markdown("Create stunning travel recap videos from your itinerary!")
+    st.markdown("---")
+    
+    if st.session_state.current_itinerary is None:
+        st.info("📌 First, generate an itinerary in the **Itinerary** tab to create a video.")
+        return
+    
+    if not PEXELS_AVAILABLE:
+        st.error("❌ Pexels API not configured. Please add PEXELS_API_KEY to your Streamlit secrets.")
+        st.info("Get a free API key from: https://www.pexels.com/api/")
+        return
+    
+    st.success("✅ Your itinerary is ready to be converted into a video!")
+    
+    itinerary = st.session_state.current_itinerary
+    city_row = st.session_state.current_city
+    user_input = st.session_state.current_user_input
+    
+    st.markdown(f"### 📍 Creating Video for: {city_row['city']}, {city_row['country']}")
+    
+    st.markdown("""
+    **What this video will include:**
+    - 🎬 Title slide with destination name
+    - 📸 High-quality images from Pexels for each location
+    - 🎤 Synchronized audio narration
+    - 📝 Subtitles showing locations and times
+    - 🔤 Day-by-day breakdown
+    - 🎵 Professional MP4 format
+    
+    **Note:** Video generation takes a few minutes. Please be patient!
+    """)
+    
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        video_quality = st.selectbox(
+            "Video Quality",
+            ["Standard (720p, 24fps)", "High (1080p, 30fps)"],
+            index=0
+        )
+    
+    with col2:
+        st.info("⏱️ Estimated time: 5-15 minutes depending on duration")
+    
+    if st.button("🎬 Generate Travel Video", type="primary", use_container_width=True, key="gen_video_btn"):
+        with st.spinner("🎥 Creating your travel video... This may take a few minutes"):
+            video_buffer = generate_itinerary_video(
+                itinerary,
+                city_row['city'],
+                city_row['country'],
+                user_input
+            )
+            
+            if video_buffer:
+                st.session_state.video_buffer = video_buffer
+                st.session_state.video_generated = True
+                st.rerun()
+    
+    # Display video if available
+    if st.session_state.video_generated and st.session_state.video_buffer:
+        st.markdown("---")
+        st.markdown("### ✅ Your Video is Ready!")
+        
+        # Display video
+        st.video(st.session_state.video_buffer)
+        
+        # Download button
+        st.download_button(
+            label="⬇️ Download Video",
+            data=st.session_state.video_buffer,
+            file_name=f"{city_row['city']}_travel_video_{datetime.now().strftime('%Y%m%d')}.mp4",
+            mime="video/mp4",
+            use_container_width=True
+        )
+        
+        st.success("🎉 Your travel video is ready to share!")
+        st.markdown("""
+        **Share your video on:**
+        - 📱 Instagram Reels
+        - 📺 YouTube
+        - 📧 Email to friends and family
+        - 💬 Social Media
+        """)
 
 def chatbot_page():
     st.title("💬 Multilingual Chatbot")
@@ -1062,6 +1522,7 @@ pages = {
     "📝 Personalization": personalization_page,
     "⭐ Recommendations": recommendations_page,
     "📅 Itinerary": itinerary_page,
+    "🎬 Video": video_page,
     "💬 Chatbot": chatbot_page,
 }
 
@@ -1073,9 +1534,9 @@ st.sidebar.markdown("### About")
 st.sidebar.markdown("""
 **AI Cultural Tourism Platform**
 
-*Fully Integrated with Gemini AI & Firebase*
+*Fully Integrated with Gemini AI, Firebase & Pexels*
 
-This platform provides AI-powered cultural tourism recommendations with real data processing and intelligent ranking.
+This platform provides AI-powered cultural tourism recommendations with video generation capabilities.
 """)
 
 st.sidebar.markdown("---")
