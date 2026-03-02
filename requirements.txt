@@ -5,3 +5,5 @@ numpy
 google-generativeai
 firebase-admin
 python-dotenv
+pyttsx3
+moviepy
