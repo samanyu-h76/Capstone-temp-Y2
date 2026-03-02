@@ -254,7 +254,12 @@ def compute_similarity(master_df, user, patterns):
     interest = user["interest"].lower()
 
     # --- Experience similarity ---
-    df["experience_sim"] = df[f"{interest}_norm"]
+    col_name = f"{interest}_norm"
+    if col_name in df.columns:
+        df["experience_sim"] = df[col_name]
+    else:
+        # Fallback: use a default value if column doesn't exist
+        df["experience_sim"] = 0.5
 
     # --- Rating similarity ---
     df["rating_sim"] = df["rating_norm"]
@@ -1196,25 +1201,7 @@ def personalization_page():
     
     st.markdown("---")
     
-    if st.button(
-        "🎯 Get Recommendations",
-        use_container_width=True,
-        type="primary",
-        key="get_recommendations_btn"
-    ):
-        if master is None:
-            st.error("❌ Dataset not available. Please check if datasets are loaded correctly.")
-        else:
-            user_input = {
-                "age": age,
-                "interest": interest,
-                "duration": trip_duration,
-                "weather": weather,
-                "season": season,
-                "budget": budget
-            }
-
-    if st.button("🎯 Get Recommendations", use_container_width=True, type="primary"):
+    if st.button("🎯 Get Recommendations", use_container_width=True, type="primary", key="get_recommendations_btn"):
         if master is None:
             st.error("❌ Dataset not available. Please check if datasets are loaded correctly.")
         else:
