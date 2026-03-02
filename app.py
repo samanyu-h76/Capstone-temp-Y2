@@ -1196,7 +1196,12 @@ def personalization_page():
     
     st.markdown("---")
     
-    if st.button("🎯 Get Recommendations", use_container_width=True, type="primary"):
+    if st.button(
+        "🎯 Get Recommendations",
+        use_container_width=True,
+        type="primary",
+        key="get_recommendations_btn"
+    ):
         if master is None:
             st.error("❌ Dataset not available. Please check if datasets are loaded correctly.")
         else:
