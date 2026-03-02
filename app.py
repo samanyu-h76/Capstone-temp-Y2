@@ -262,18 +262,28 @@ def compute_similarity(master_df, user, patterns):
         df["experience_sim"] = 0.5
 
     # --- Rating similarity ---
-    df["rating_sim"] = df["rating_norm"]
+    if "rating_norm" in df.columns:
+        df["rating_sim"] = df["rating_norm"]
+    elif "rating" in df.columns:
+        # Normalize rating to 0-1 scale if it exists
+        df["rating_sim"] = df["rating"] / 5.0
+    else:
+        df["rating_sim"] = 0.5
 
     # --- Duration similarity ---
-    df["duration_sim"] = 1 - (
-        abs(df["ideal_duration_days"] - user_duration)
-        / df["ideal_duration_days"]
-    ).clip(0, 1)
+    if "ideal_duration_days" in df.columns:
+        df["duration_sim"] = 1 - (
+            abs(df["ideal_duration_days"] - user_duration)
+            / df["ideal_duration_days"].clip(lower=1)  # Avoid division by zero
+        ).clip(0, 1)
+    else:
+        df["duration_sim"] = 0.5
 
     # --- Budget similarity (distance based) ---
-    df["budget_sim"] = 1 - (
-        abs(df["budget_numeric"] - user_budget_num) / 2
-    )
+    if "budget_numeric" in df.columns:
+        df["budget_sim"] = (1 - (abs(df["budget_numeric"] - user_budget_num) / 2)).clip(0, 1)
+    else:
+        df["budget_sim"] = 0.5
 
     # --- Climate similarity ---
     season_temp_col = f"{season}_avg_temp"
