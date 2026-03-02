@@ -1,5 +1,7 @@
+reportlab
 streamlit
 pandas
 numpy
 google-generativeai
 firebase-admin
+python-dotenv
