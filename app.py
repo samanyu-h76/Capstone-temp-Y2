@@ -222,32 +222,84 @@ def get_dynamic_weights(pattern_row):
     return {"experience": 0.6, "rating": 0.25, "duration": 0.15}
 
 # =========================
-# FILTER + RANK
+# ADVANCED SIMILARITY ENGINE
 # =========================
-def filter_cities(df, user):
-    return df[
-        (df["budget_level"] == user["budget"]) &
-        (df[f"climate_{user['season'].lower()}_label"] == user["weather"])
-    ]
 
-def rank_cities(df, user, patterns):
-    age_group = get_age_group(user["age"])
-    pattern_row = get_user_pattern(patterns, user["interest"], age_group)
-    weights = get_dynamic_weights(pattern_row)
+def map_budget_to_numeric(budget):
+    return {
+        "Budget": 1,
+        "Mid-range": 2,
+        "Luxury": 3
+    }.get(budget, 2)
 
-    df = df.copy()
-    df["rating_norm"] = df["avg_rating"] / 5
-    df["experience_match"] = df[f"{user['interest'].lower()}_score"]
 
-    df["duration_match"] = 1 - (
-        abs(df["ideal_duration_days"] - user["duration"]) /
-        df["ideal_duration_days"]
+def map_weather_to_temp(weather):
+    # Ideal temperature targets
+    return {
+        "Cold": 8,
+        "Pleasant": 20,
+        "Warm": 28
+    }.get(weather, 20)
+
+
+def compute_similarity(master_df, user, patterns):
+
+    df = master_df.copy()
+
+    # --- User numeric preferences ---
+    user_budget_num = map_budget_to_numeric(user["budget"])
+    user_temp_target = map_weather_to_temp(user["weather"])
+    user_duration = user["duration"]
+    season = user["season"].lower()
+    interest = user["interest"].lower()
+
+    # --- Experience similarity ---
+    df["experience_sim"] = df[f"{interest}_norm"]
+
+    # --- Rating similarity ---
+    df["rating_sim"] = df["rating_norm"]
+
+    # --- Duration similarity ---
+    df["duration_sim"] = 1 - (
+        abs(df["ideal_duration_days"] - user_duration)
+        / df["ideal_duration_days"]
     ).clip(0, 1)
 
+    # --- Budget similarity (distance based) ---
+    df["budget_sim"] = 1 - (
+        abs(df["budget_numeric"] - user_budget_num) / 2
+    )
+
+    # --- Climate similarity ---
+    season_temp_col = f"{season}_avg_temp"
+
+    if season_temp_col in df.columns:
+        df["climate_sim"] = 1 - (
+            abs(df[season_temp_col] - user_temp_target) / 25
+        ).clip(0, 1)
+    else:
+        df["climate_sim"] = 0.5
+
+    # --- Dynamic weights (future ready) ---
+    age_group = get_age_group(user["age"])
+    pattern_row = get_user_pattern(patterns, user["interest"], age_group)
+
+    # You can evolve this later, for now:
+    weights = {
+        "experience": 0.35,
+        "rating": 0.2,
+        "duration": 0.15,
+        "budget": 0.15,
+        "climate": 0.15
+    }
+
+    # --- Final score ---
     df["final_score"] = (
-        weights["experience"] * df["experience_match"] +
-        weights["rating"] * df["rating_norm"] +
-        weights["duration"] * df["duration_match"]
+        weights["experience"] * df["experience_sim"] +
+        weights["rating"] * df["rating_sim"] +
+        weights["duration"] * df["duration_sim"] +
+        weights["budget"] * df["budget_sim"] +
+        weights["climate"] * df["climate_sim"]
     )
 
     return df.sort_values("final_score", ascending=False)
@@ -269,13 +321,13 @@ def save_to_firebase(user_input, ranked_results, session_id):
                 "continent": row["continent"],
                 "rating": float(row["avg_rating"]),
                 "match_score": float(row["final_score"]),
-                "budget_level": row["budget_level"],
+                "budget_numeric": float(row["budget_numeric"]),
                 "ideal_duration": int(row["ideal_duration_days"]),
                 "description": row["description"],
-                "culture_score": float(row.get("culture_score", 0)),
-                "adventure_score": float(row.get("adventure_score", 0)),
-                "nature_score": float(row.get("nature_score", 0)),
-                "beach_score": float(row.get("beach_score", 0))
+                "culture_norm": float(row.get("culture_norm", 0)),
+                "adventure_norm": float(row.get("adventure_norm", 0)),
+                "nature_norm": float(row.get("nature_norm", 0)),
+                "beach_norm": float(row.get("beach_norm", 0))
             })
         
         doc_data = {
@@ -1157,27 +1209,33 @@ def personalization_page():
                 "budget": budget
             }
 
-            with st.spinner("Finding your perfect destinations..."):
-                filtered = filter_cities(master, user_input)
+    if st.button("🎯 Get Recommendations", use_container_width=True, type="primary"):
+        if master is None:
+            st.error("❌ Dataset not available. Please check if datasets are loaded correctly.")
+        else:
+            user_input = {
+                "age": age,
+                "interest": interest,
+                "duration": trip_duration,
+                "weather": weather,
+                "season": season,
+                "budget": budget
+            }
 
-            if filtered.empty:
-                st.warning("⚠️ No matching cities found. Try adjusting your preferences.")
-                st.session_state.ranked_results = None
-                st.session_state.user_input = None
-            else:
-                ranked = rank_cities(filtered, user_input, patterns).head(3)
-                
-                st.session_state.ranked_results = ranked
-                st.session_state.user_input = user_input
-                st.session_state.personalization_complete = True
-                
-                with st.spinner("Saving recommendations..."):
-                    doc_id = save_to_firebase(user_input, ranked, st.session_state.session_id)
-                    if doc_id:
-                        st.session_state.firebase_doc_id = doc_id
-                        st.success(f"✅ Recommendations saved!")
-                
-                st.rerun()
+            with st.spinner("Finding your perfect destinations..."):
+                ranked = compute_similarity(master, user_input, patterns).head(3)
+
+            st.session_state.ranked_results = ranked
+            st.session_state.user_input = user_input
+            st.session_state.personalization_complete = True
+
+            with st.spinner("Saving recommendations..."):
+                doc_id = save_to_firebase(user_input, ranked, st.session_state.session_id)
+                if doc_id:
+                    st.session_state.firebase_doc_id = doc_id
+                    st.success("✅ Recommendations saved!")
+
+             st.rerun()
 
 def recommendations_page():
     st.title("⭐ Smart Recommendations")
@@ -1221,7 +1279,7 @@ def recommendations_page():
             with st.expander("🌤️ Weather & Activity Suggestions", expanded=True):
                 advice = gemini_weather_advice(
                     row["city"],
-                    row[f"climate_{season.lower()}_label"],
+                    user_input["weather"],
                     season,
                     interest
                 )
