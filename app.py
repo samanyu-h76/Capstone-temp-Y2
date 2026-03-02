@@ -1235,7 +1235,7 @@ def personalization_page():
                     st.session_state.firebase_doc_id = doc_id
                     st.success("✅ Recommendations saved!")
 
-             st.rerun()
+            st.rerun()
 
 def recommendations_page():
     st.title("⭐ Smart Recommendations")
