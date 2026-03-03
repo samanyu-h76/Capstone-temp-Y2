@@ -179,6 +179,32 @@ def initialize_gemini():
 initialize_gemini()
 
 # -------------------------
+# DATASET LOADING
+# -------------------------
+@st.cache_data
+def load_datasets():
+    """Load master destinations and user patterns datasets"""
+    try:
+        # Load master destinations dataset
+        master = pd.read_csv("master_destinations_v2.csv")
+        
+        # Load user preference patterns if available
+        try:
+            patterns = pd.read_csv("user_preference_patterns.csv")
+        except:
+            patterns = None
+        
+        return master, patterns
+    except FileNotFoundError:
+        st.error("❌ Dataset files not found. Please ensure master_destinations_v2.csv is in the project root.")
+        return None, None
+    except Exception as e:
+        st.error(f"❌ Error loading datasets: {str(e)}")
+        return None, None
+
+master, patterns = load_datasets()
+
+# -------------------------
 # Pexels setup
 # -------------------------
 PEXELS_AVAILABLE = False
