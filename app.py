@@ -451,6 +451,33 @@ def save_to_firebase(user_input, ranked_results, session_id):
 # =========================
 # GEMINI FUNCTIONS
 # =========================
+@st.cache_data
+def generate_destination_description(city, country):
+    """Generate a detailed description for a destination using Gemini"""
+    if not GEMINI_AVAILABLE:
+        return f"{city}, {country} is a wonderful travel destination with unique culture, cuisine, and attractions."
+    
+    try:
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        prompt = f"""Write a compelling 3-4 sentence travel description for {city}, {country}. 
+        Include what makes it unique, what travelers can experience there, and why it's worth visiting.
+        Keep it engaging but concise."""
+        
+        response = model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.7,
+                max_output_tokens=150,
+            )
+        )
+        
+        if response and response.text:
+            return response.text.strip()
+        else:
+            return f"{city}, {country} is a wonderful travel destination with unique culture, cuisine, and attractions."
+    except Exception as e:
+        return f"{city}, {country} is a wonderful travel destination with unique culture, cuisine, and attractions."
+
 def gemini_verify_recommendations(top_recommendations, user_input):
     """Verify recommendations using Gemini and provide confidence scores with explanations"""
     if not GEMINI_AVAILABLE:
@@ -1479,7 +1506,7 @@ def recommendations_page():
             with col2:
                 st.markdown(f"## {top_row['city']}")
                 st.markdown(f"### {top_row['country']}")
-                st.caption(f"📍 {top_row['continent']}")
+                st.caption(f"📍 {top_row['region'].title()}")
                 st.markdown(f"⭐ **Rating:** {top_row['avg_rating']}/5.0")
                 st.markdown(f"🎯 **Match Score:** {top_row['final_score']:.2f}")
             
@@ -1494,6 +1521,12 @@ def recommendations_page():
             
             st.write("📝 **Description:**")
             
+            # Generate description if not in dataset
+            description = top_row.get("description", None)
+            if description is None or pd.isna(description):
+                with st.spinner("Generating description..."):
+                    description = generate_destination_description(top_row['city'], top_row['country'])
+            
             lang = st.selectbox(
                 "Select language:",
                 ["English", "Hindi", "Spanish", "French", "German"],
@@ -1503,10 +1536,10 @@ def recommendations_page():
             
             if lang != "English":
                 with st.spinner(f"Translating to {lang}..."):
-                    translated = gemini_translate(top_row["description"], lang)
+                    translated = gemini_translate(description, lang)
                     st.write(translated)
             else:
-                st.write(top_row["description"])
+                st.write(description)
             
             st.write("**Was this recommendation helpful?**")
             col1, col2, col3 = st.columns([1, 1, 8])
@@ -1556,6 +1589,12 @@ def recommendations_page():
                 # Description with Language Support
                 st.write("📝 **Description:**")
                 
+                # Generate description if not in dataset
+                description = row.get("description", None)
+                if description is None or pd.isna(description):
+                    with st.spinner("Generating description..."):
+                        description = generate_destination_description(row['city'], row['country'])
+                
                 lang = st.selectbox(
                     "Select language:",
                     ["English", "Hindi", "Spanish", "French", "German"],
@@ -1565,10 +1604,10 @@ def recommendations_page():
                 
                 if lang != "English":
                     with st.spinner(f"Translating to {lang}..."):
-                        translated = gemini_translate(row["description"], lang)
+                        translated = gemini_translate(description, lang)
                         st.write(translated)
                 else:
-                    st.write(row["description"])
+                    st.write(description)
                 
                 # Feedback buttons
                 st.write("**Was this recommendation helpful?**")
