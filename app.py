@@ -59,7 +59,12 @@ def initialize_session_state():
             'duration': 5,
             'weather': 'Pleasant',
             'season': 'Summer',
-            'budget': 'Mid-range'
+            'budget': 'Mid-range',
+            'travel_style': 'Solo',
+            'activity_level': 'Moderate',
+            'accommodation': 'Hotel',
+            'dietary': 'Omnivore',
+            'visa_requirement': 'No preference'
         }
     
     # FEATURE 2: CACHE RECOMMENDATIONS - PERSISTENT DATA
@@ -413,7 +418,12 @@ def save_to_firebase(user_input, ranked_results, session_id):
                 "duration": user_input["duration"],
                 "weather": user_input["weather"],
                 "season": user_input["season"],
-                "budget": user_input["budget"]
+                "budget": user_input["budget"],
+                "travel_style": user_input.get("travel_style", "Solo"),
+                "activity_level": user_input.get("activity_level", "Moderate"),
+                "accommodation": user_input.get("accommodation", "Hotel"),
+                "dietary": user_input.get("dietary", "Omnivore"),
+                "visa_requirement": user_input.get("visa_requirement", "No preference")
             },
             "recommendations": recommendations,
             "total_recommendations": len(recommendations),
@@ -429,9 +439,83 @@ def save_to_firebase(user_input, ranked_results, session_id):
 # =========================
 # GEMINI FUNCTIONS
 # =========================
+def gemini_verify_recommendations(top_recommendations, user_input):
+    """Verify recommendations using Gemini and provide confidence scores with explanations"""
+    if not GEMINI_AVAILABLE:
+        return top_recommendations.copy()
+    
+    try:
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        
+        cities_list = ", ".join([f"{row['city']}, {row['country']}" for _, row in top_recommendations.iterrows()])
+        
+        prompt = f"""You are a travel expert. Given this traveler profile and recommended destinations, verify the relevance of each destination.
+
+TRAVELER PROFILE:
+- Age: {user_input['age']}
+- Primary Interest: {user_input['interest']}
+- Travel Style: {user_input.get('travel_style', 'Solo')}
+- Activity Level: {user_input.get('activity_level', 'Moderate')}
+- Budget: {user_input['budget']}
+- Duration: {user_input['duration']} days
+- Accommodation: {user_input.get('accommodation', 'Hotel')}
+- Dietary: {user_input.get('dietary', 'Omnivore')}
+
+RECOMMENDED CITIES: {cities_list}
+
+For EACH city, provide in this exact format (one line per city):
+[CITY], [COUNTRY] | Confidence: [0-100]% | Why: [2 sentence explanation of why this matches]
+
+Be specific and reference the traveler's interests and preferences."""
+
+        response = model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.7,
+                max_output_tokens=400,
+            )
+        )
+        
+        if response and response.text:
+            verifications = {}
+            lines = response.text.strip().split('\n')
+            for line in lines:
+                if '|' in line and 'Confidence:' in line:
+                    parts = line.split('|')
+                    if len(parts) >= 3:
+                        try:
+                            city_country = parts[0].strip()
+                            confidence_str = parts[1].strip().replace('Confidence:', '').strip().replace('%', '')
+                            confidence = int(float(confidence_str))
+                            explanation = parts[2].strip().replace('Why:', '').strip()
+                            
+                            for _, row in top_recommendations.iterrows():
+                                if row['city'].lower() in city_country.lower():
+                                    verifications[row['city']] = {
+                                        'confidence': confidence,
+                                        'explanation': explanation
+                                    }
+                                    break
+                        except:
+                            pass
+            
+            result = top_recommendations.copy()
+            result['ai_confidence'] = result['city'].map(
+                lambda x: verifications.get(x, {}).get('confidence', 75)
+            )
+            result['ai_explanation'] = result['city'].map(
+                lambda x: verifications.get(x, {}).get('explanation', 'Great match based on your preferences')
+            )
+            return result
+        else:
+            return top_recommendations.copy()
+            
+    except Exception as e:
+        return top_recommendations.copy()
+
 def gemini_weather_advice(city, climate, season, interest):
-    """Generate weather-based travel advice using Gemini"""
-    fallback = f"{city} offers a {climate.lower()} climate during {season}, suitable for {interest.lower()} activities."
+    """Generate detailed weather-based travel advice using Gemini"""
+    fallback = f"{city} offers a {climate.lower()} climate during {season}, suitable for {interest.lower()} activities. Pack appropriately and stay hydrated."
     
     if not GEMINI_AVAILABLE:
         return fallback
@@ -446,18 +530,19 @@ Climate: {climate}
 Season: {season}
 Traveler Interest: {interest}
 
-Provide 2-3 sentences with:
-1. What the weather is typically like
-2. 2-3 specific activities suitable for this weather
-3. One practical travel tip
+Provide 3-4 sentences with:
+1. What the weather is typically like and what to expect
+2. 2-3 specific activities best suited for this weather
+3. Packing recommendations for the climate
+4. One health/wellness tip (sun protection, hydration, etc.)
 
-Keep it concise."""
+Keep it informative and practical."""
 
         response = model.generate_content(
             prompt,
             generation_config=genai.types.GenerationConfig(
                 temperature=0.7,
-                max_output_tokens=200,
+                max_output_tokens=250,
             )
         )
         
@@ -515,6 +600,11 @@ TRAVELER PROFILE:
 - Season: {user_input['season']}
 - Weather Preference: {user_input['weather']}
 - Age: {user_input['age']}
+- Travel Style: {user_input.get('travel_style', 'Solo')}
+- Activity Level: {user_input.get('activity_level', 'Moderate')}
+- Accommodation Type: {user_input.get('accommodation', 'Hotel')}
+- Dietary Preferences: {user_input.get('dietary', 'Omnivore')}
+- Visa Requirements: {user_input.get('visa_requirement', 'No preference')}
 
 INSTRUCTIONS - FOLLOW EXACTLY:
 1. Start with a 3-4 sentence personalized introduction
@@ -534,6 +624,10 @@ CRITICAL RULES:
 - Provide realistic time durations for each activity
 - Suggest actual dining establishments that exist in {city}
 - Make recommendations match the {user_input['interest']} interest and {user_input['budget']} budget
+- Respect dietary preference: {user_input.get('dietary', 'Omnivore')} (suggest {user_input.get('dietary', 'any')} restaurants)
+- Tailor activity pace to {user_input.get('activity_level', 'Moderate')} activity level
+- Choose activities suitable for {user_input.get('travel_style', 'Solo')} travel
+- Suggest accommodations matching {user_input.get('accommodation', 'Hotel')} preference
 - Include practical logistics (opening hours, transportation, booking tips)
 - Write COMPLETE sentences, not abbreviations
 - DO NOT TRUNCATE or cut off any information
@@ -1165,7 +1259,12 @@ def home_page():
                 'duration': 5,
                 'weather': 'Pleasant',
                 'season': 'Summer',
-                'budget': 'Mid-range'
+                'budget': 'Mid-range',
+                'travel_style': 'Solo',
+                'activity_level': 'Moderate',
+                'accommodation': 'Hotel',
+                'dietary': 'Omnivore',
+                'visa_requirement': 'No preference'
             }
             st.session_state.cached_ranked_results = None
             st.session_state.cached_itineraries = {}
@@ -1216,24 +1315,52 @@ def personalization_page():
             ["Cold", "Pleasant", "Warm"],
             index=["Cold", "Pleasant", "Warm"].index(cached_data['weather'])
         )
-    
-    with col2:
+        
         budget = st.selectbox(
             "Budget Level",
             ["Budget", "Mid-range", "Luxury"],
             index=["Budget", "Mid-range", "Luxury"].index(cached_data['budget'])
         )
+    
+    with col2:
+        travel_style = st.selectbox(
+            "Travel Style",
+            ["Solo", "Couple", "Family", "Group"],
+            index=["Solo", "Couple", "Family", "Group"].index(cached_data['travel_style'])
+        )
         
-        st.markdown("---")
-        st.markdown("### Your Profile Summary")
-        st.info(f"""
-        **Age:** {age} years old
-        **Primary Interest:** {interest}
-        **Trip Duration:** {trip_duration} days
-        **Preferred Season:** {season}
-        **Weather Preference:** {weather}
-        **Budget Level:** {budget}
-        """)
+        activity_level = st.selectbox(
+            "Activity Level",
+            ["Relaxed", "Moderate", "Adventure"],
+            index=["Relaxed", "Moderate", "Adventure"].index(cached_data['activity_level'])
+        )
+        
+        accommodation = st.selectbox(
+            "Accommodation Preference",
+            ["Hostel", "Hotel", "Resort", "Airbnb", "Luxury"],
+            index=["Hostel", "Hotel", "Resort", "Airbnb", "Luxury"].index(cached_data['accommodation'])
+        )
+        
+        dietary = st.selectbox(
+            "Dietary Preferences",
+            ["Omnivore", "Vegetarian", "Vegan", "Gluten-Free"],
+            index=["Omnivore", "Vegetarian", "Vegan", "Gluten-Free"].index(cached_data['dietary'])
+        )
+        
+        visa_requirement = st.selectbox(
+            "Visa/Passport Requirements",
+            ["No preference", "Visa-free only", "Any"],
+            index=["No preference", "Visa-free only", "Any"].index(cached_data['visa_requirement'])
+        )
+    
+    st.markdown("---")
+    st.markdown("### Your Profile Summary")
+    st.info(f"""
+    **Age:** {age} years old  |  **Interest:** {interest}  |  **Duration:** {trip_duration} days
+    **Season:** {season}  |  **Weather:** {weather}  |  **Budget:** {budget}
+    **Travel Style:** {travel_style}  |  **Activity:** {activity_level}  |  **Accommodation:** {accommodation}
+    **Dietary:** {dietary}  |  **Visa:** {visa_requirement}
+    """)
     
     st.markdown("---")
     
@@ -1247,7 +1374,12 @@ def personalization_page():
                 "duration": trip_duration,
                 "weather": weather,
                 "season": season,
-                "budget": budget
+                "budget": budget,
+                "travel_style": travel_style,
+                "activity_level": activity_level,
+                "accommodation": accommodation,
+                "dietary": dietary,
+                "visa_requirement": visa_requirement
             }
 
             # FEATURE 2: CACHE IN SESSION STATE - THIS PERSISTS NOW
@@ -1290,6 +1422,11 @@ def recommendations_page():
     user_input = st.session_state.user_input or st.session_state.cached_user_input
     season = user_input["season"]
     interest = user_input["interest"]
+    
+    # Apply Gemini verification to recommendations
+    with st.spinner("🤖 Verifying recommendations with AI..."):
+        ranked = gemini_verify_recommendations(ranked, user_input)
+        st.session_state.ranked_results = ranked
     
     st.success(f"✨ Found {len(ranked)} perfect destinations for you!")
     
@@ -1360,24 +1497,66 @@ def recommendations_page():
     
     st.markdown("---")
     
-    # FEATURE 4: OTHER TOP PICKS (HORIZONTAL)
+    # FEATURE 4: OTHER TOP PICKS (VERTICAL WITH ALL DETAILS)
     if len(ranked) > 1:
         st.markdown("### 🎯 Other Top Picks")
         
-        cols = st.columns(min(4, len(ranked) - 1))
-        
         for idx, (i, (_, row)) in enumerate(enumerate(ranked.iloc[1:].iterrows(), 2)):
-            if idx < 4:
-                with cols[idx]:
-                    with st.container(border=True):
-                        st.markdown(f"### {i}. {row['city']}")
-                        st.caption(f"📍 {row['country']}")
-                        
-                        # FEATURE 5: PEXELS IMAGE
-                        st.image(get_city_image_pexels(row['city']), use_container_width=True)
-                        
-                        st.write(f"⭐ {row['avg_rating']}/5.0")
-                        st.write(f"🎯 {row['final_score']:.2f}")
+            with st.container(border=True):
+                col1, col2 = st.columns([2, 1])
+                
+                with col1:
+                    st.markdown(f"### {i}. {row['city']}, {row['country']}")
+                    st.caption(f"⭐ Rating: {row['avg_rating']}/5.0 | 🎯 Match Score: {row['final_score']:.2f}")
+                    
+                    # Show AI Confidence if available
+                    if 'ai_confidence' in row:
+                        st.info(f"🤖 **AI Confidence:** {row['ai_confidence']}%")
+                        if 'ai_explanation' in row:
+                            st.caption(f"**Why this match:** {row['ai_explanation']}")
+                
+                with col2:
+                    # FEATURE 5: PEXELS IMAGE
+                    st.image(get_city_image_pexels(row['city']), use_container_width=True)
+                
+                # Weather & Activity Suggestions
+                with st.expander("🌤️ Weather & Activity Suggestions"):
+                    advice = gemini_weather_advice(
+                        row["city"],
+                        user_input["weather"],
+                        season,
+                        interest
+                    )
+                    st.info(advice)
+                
+                # Description with Language Support
+                st.write("📝 **Description:**")
+                
+                lang = st.selectbox(
+                    "Select language:",
+                    ["English", "Hindi", "Spanish", "French", "German"],
+                    key=f"lang_pick_{i}_{row['city']}",
+                    help="Powered by Gemini AI translation"
+                )
+                
+                if lang != "English":
+                    with st.spinner(f"Translating to {lang}..."):
+                        translated = gemini_translate(row["description"], lang)
+                        st.write(translated)
+                else:
+                    st.write(row["description"])
+                
+                # Feedback buttons
+                st.write("**Was this recommendation helpful?**")
+                col1, col2, col3 = st.columns([1, 1, 8])
+                with col1:
+                    if st.button("👍 Yes", key=f"up_pick_{i}_{row['city']}"):
+                        save_feedback(row["city"], "up")
+                        st.success("Thanks!")
+                with col2:
+                    if st.button("👎 No", key=f"down_pick_{i}_{row['city']}"):
+                        save_feedback(row["city"], "down")
+                        st.success("Thanks!")
 
 def itinerary_page():
     st.title("📅 Itinerary Generator")
