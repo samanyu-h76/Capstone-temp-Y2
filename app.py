@@ -67,6 +67,10 @@ def initialize_session_state():
             'visa_requirement': 'No preference'
         }
     
+    # Initialize tracking for preference changes
+    if 'last_user_preferences' not in st.session_state:
+        st.session_state.last_user_preferences = None
+    
     # FEATURE 2: CACHE RECOMMENDATIONS - PERSISTENT DATA
     if 'cached_ranked_results' not in st.session_state:
         st.session_state.cached_ranked_results = None
@@ -242,27 +246,9 @@ def initialize_pexels():
 
 initialize_pexels()
 
-# =========================
-# LOAD DATA
-# =========================
-@st.cache_data
-def load_data():
-    """Load datasets with error handling"""
-    try:
-        master = pd.read_csv("datasets/master_destinations.csv")
-        patterns = pd.read_csv("datasets/user_preference_patterns.csv")
-        return master, patterns
-    except FileNotFoundError as e:
-        st.error(f"Dataset not found: {e}")
-        st.stop()
-    except Exception as e:
-        st.error(f"Error loading data: {e}")
-        st.stop()
-
-try:
-    master, patterns = load_data()
-except:
-    master, patterns = None, None
+# NOTE: V2 dataset already loaded at line 205 via load_datasets()
+# DO NOT load old dataset - it would override the v2 data
+# The load_datasets() function at line 185 is the active data loader
 
 # =========================
 # UTILITIES
@@ -1276,9 +1262,11 @@ def home_page():
         if st.button("🔄 Start New Session"):
             st.session_state.session_id = str(uuid.uuid4())
             st.session_state.ranked_results = None
+            st.session_state.cached_ranked_results = None
             st.session_state.user_input = None
             st.session_state.firebase_doc_id = None
             st.session_state.personalization_complete = False
+            st.session_state.last_user_preferences = None
             st.session_state.cached_user_input = {
                 'age': 30,
                 'interest': 'Culture',
@@ -1292,6 +1280,7 @@ def home_page():
                 'dietary': 'Omnivore',
                 'visa_requirement': 'No preference'
             }
+            st.success("✅ Session reset! Go to Personalization to start fresh.")
             st.session_state.cached_ranked_results = None
             st.session_state.cached_itineraries = {}
             st.rerun()
@@ -1390,26 +1379,35 @@ def personalization_page():
     
     st.markdown("---")
     
+    # Check if preferences have changed to trigger new recommendations
+    current_preferences = {
+        "age": age,
+        "interest": interest,
+        "duration": trip_duration,
+        "weather": weather,
+        "season": season,
+        "budget": budget,
+        "travel_style": travel_style,
+        "activity_level": activity_level,
+        "accommodation": accommodation,
+        "dietary": dietary,
+        "visa_requirement": visa_requirement
+    }
+    
+    # DEBUG: Show if preferences changed
+    preferences_changed = st.session_state.last_user_preferences != current_preferences
+    if preferences_changed:
+        st.info("📝 Preferences changed - generating new recommendations")
+    
     if st.button("🎯 Get Recommendations", use_container_width=True, type="primary", key="get_recommendations_btn"):
         if master is None:
             st.error("❌ Dataset not available.")
         else:
-            user_input = {
-                "age": age,
-                "interest": interest,
-                "duration": trip_duration,
-                "weather": weather,
-                "season": season,
-                "budget": budget,
-                "travel_style": travel_style,
-                "activity_level": activity_level,
-                "accommodation": accommodation,
-                "dietary": dietary,
-                "visa_requirement": visa_requirement
-            }
+            user_input = current_preferences
 
             # FEATURE 2: CACHE IN SESSION STATE - THIS PERSISTS NOW
             st.session_state.cached_user_input = user_input
+            st.session_state.last_user_preferences = user_input
 
             with st.spinner("Finding your perfect destinations..."):
                 # FEATURE 4: TOP 5 RECOMMENDATIONS
