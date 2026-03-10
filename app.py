@@ -60,11 +60,16 @@ def initialize_session_state():
             'weather': 'Pleasant',
             'season': 'Summer',
             'budget': 'Mid-range',
-            'travel_style': 'Solo',
-            'activity_level': 'Moderate',
-            'accommodation': 'Hotel',
+            'continent': 'All Continents',
+            'country': 'All Countries'
+        }
+    
+    # Itinerary preferences (moved from personalization)
+    if 'itinerary_preferences' not in st.session_state:
+        st.session_state.itinerary_preferences = {
             'dietary': 'Omnivore',
-            'visa_requirement': 'No preference'
+            'accommodation': 'Hotel',
+            'accessibility': 'No specific needs'
         }
     
     # Initialize tracking for preference changes
@@ -253,6 +258,50 @@ initialize_pexels()
 # =========================
 # UTILITIES
 # =========================
+def clean_text_for_pdf(text):
+    """Remove emojis and special characters that cause PDF rendering issues"""
+    if not text:
+        return text
+    
+    # Remove common emoji patterns and special characters
+    import re
+    
+    # Remove emoji characters (Unicode range)
+    emoji_pattern = re.compile(
+        "["
+        u"\U0001F600-\U0001F64F"  # emoticons
+        u"\U0001F300-\U0001F5FF"  # symbols & pictographs
+        u"\U0001F680-\U0001F6FF"  # transport & map symbols
+        u"\U0001F1E0-\U0001F1FF"  # flags (iOS)
+        u"\U00002702-\U000027B0"
+        u"\U000024C2-\U0001F251"
+        u"\U0001f926-\U0001f937"
+        u"\U00010000-\U0010ffff"
+        u"\u2640-\u2642"
+        u"\u2600-\u2B55"
+        u"\u200d"
+        u"\u23cf"
+        u"\u23e9"
+        u"\u231a"
+        u"\ufe0f"  # dingbats
+        u"\u3030"
+        "]+",
+        flags=re.UNICODE
+    )
+    
+    # Remove emojis
+    text = emoji_pattern.sub(r'', text)
+    
+    # Replace problematic characters
+    text = text.replace('•', '-')
+    text = text.replace('→', '>')
+    text = text.replace('✓', 'Yes')
+    text = text.replace('✗', 'No')
+    text = text.replace('★', '*')
+    text = text.replace('☆', '*')
+    
+    return text.strip()
+
 def get_age_group(age):
     if age <= 25:
         return "18-25"
@@ -639,11 +688,9 @@ TRAVELER PROFILE:
 - Season: {user_input['season']}
 - Weather Preference: {user_input['weather']}
 - Age: {user_input['age']}
-- Travel Style: {user_input.get('travel_style', 'Solo')}
-- Activity Level: {user_input.get('activity_level', 'Moderate')}
 - Accommodation Type: {user_input.get('accommodation', 'Hotel')}
 - Dietary Preferences: {user_input.get('dietary', 'Omnivore')}
-- Visa Requirements: {user_input.get('visa_requirement', 'No preference')}
+- Accessibility Needs: {user_input.get('accessibility', 'No specific needs')}
 
 INSTRUCTIONS - FOLLOW EXACTLY:
 1. Start with a 3-4 sentence personalized introduction
@@ -663,13 +710,13 @@ CRITICAL RULES:
 - Provide realistic time durations for each activity
 - Suggest actual dining establishments that exist in {city}
 - Make recommendations match the {user_input['interest']} interest and {user_input['budget']} budget
-- Respect dietary preference: {user_input.get('dietary', 'Omnivore')} (suggest {user_input.get('dietary', 'any')} restaurants)
-- Tailor activity pace to {user_input.get('activity_level', 'Moderate')} activity level
-- Choose activities suitable for {user_input.get('travel_style', 'Solo')} travel
+- Respect dietary preference: {user_input.get('dietary', 'Omnivore')} (suggest {user_input.get('dietary', 'any')} restaurants and food options)
 - Suggest accommodations matching {user_input.get('accommodation', 'Hotel')} preference
+- Ensure all activities and locations accommodate: {user_input.get('accessibility', 'No specific needs')}
 - Include practical logistics (opening hours, transportation, booking tips)
 - Write COMPLETE sentences, not abbreviations
 - DO NOT TRUNCATE or cut off any information
+- DO NOT use emojis or special characters in the itinerary
 - Ensure ALL {duration} days are COMPLETE with no missing sections
 
 GENERATE THE FULL ITINERARY NOW:"""
@@ -1301,11 +1348,13 @@ def home_page():
                 'weather': 'Pleasant',
                 'season': 'Summer',
                 'budget': 'Mid-range',
-                'travel_style': 'Solo',
-                'activity_level': 'Moderate',
-                'accommodation': 'Hotel',
+                'continent': 'All Continents',
+                'country': 'All Countries'
+            }
+            st.session_state.itinerary_preferences = {
                 'dietary': 'Omnivore',
-                'visa_requirement': 'No preference'
+                'accommodation': 'Hotel',
+                'accessibility': 'No specific needs'
             }
             st.success("✅ Session reset! Go to Personalization to start fresh.")
             st.session_state.cached_ranked_results = None
@@ -1330,7 +1379,7 @@ def personalization_page():
             "Your Age",
             min_value=18,
             max_value=80,
-            value=cached_data['age']  # Load from cache
+            value=cached_data['age']
         )
         
         # FEATURE 1: CUISINE OPTION
@@ -1351,7 +1400,8 @@ def personalization_page():
             ["Spring", "Summer", "Autumn", "Winter"],
             index=["Spring", "Summer", "Autumn", "Winter"].index(cached_data['season'])
         )
-        
+    
+    with col2:
         weather = st.selectbox(
             "Weather Preference",
             ["Cold", "Pleasant", "Warm"],
@@ -1363,45 +1413,43 @@ def personalization_page():
             ["Budget", "Mid-range", "Luxury"],
             index=["Budget", "Mid-range", "Luxury"].index(cached_data['budget'])
         )
-    
-    with col2:
-        travel_style = st.selectbox(
-            "Travel Style",
-            ["Solo", "Couple", "Family", "Group"],
-            index=["Solo", "Couple", "Family", "Group"].index(cached_data['travel_style'])
+        
+        continent = st.selectbox(
+            "Preferred Continent",
+            ["All Continents", "Africa", "Asia", "Europe", "North America", "Oceania", "Middle East"],
+            index=["All Continents", "Africa", "Asia", "Europe", "North America", "Oceania", "Middle East"].index(cached_data.get('continent', 'All Continents'))
         )
         
-        activity_level = st.selectbox(
-            "Activity Level",
-            ["Relaxed", "Moderate", "Adventure"],
-            index=["Relaxed", "Moderate", "Adventure"].index(cached_data['activity_level'])
-        )
-        
-        accommodation = st.selectbox(
-            "Accommodation Preference",
-            ["Hostel", "Hotel", "Resort", "Airbnb", "Luxury"],
-            index=["Hostel", "Hotel", "Resort", "Airbnb", "Luxury"].index(cached_data['accommodation'])
-        )
-        
-        dietary = st.selectbox(
-            "Dietary Preferences",
-            ["Omnivore", "Vegetarian", "Vegan", "Gluten-Free"],
-            index=["Omnivore", "Vegetarian", "Vegan", "Gluten-Free"].index(cached_data['dietary'])
-        )
-        
-        visa_requirement = st.selectbox(
-            "Visa/Passport Requirements",
-            ["No preference", "Visa-free only", "Any"],
-            index=["No preference", "Visa-free only", "Any"].index(cached_data['visa_requirement'])
-        )
+        # Get countries based on continent selection
+        if master is not None:
+            if continent == "All Continents":
+                countries_list = ["All Countries"] + sorted(master['country'].unique().tolist())
+            else:
+                continent_map = {
+                    "Africa": "africa",
+                    "Asia": "asia",
+                    "Europe": "europe",
+                    "North America": "north_america",
+                    "Oceania": "oceania",
+                    "Middle East": "middle_east"
+                }
+                filtered_countries = master[master['region'] == continent_map[continent]]['country'].unique()
+                countries_list = ["All Countries"] + sorted(filtered_countries.tolist())
+            
+            country = st.selectbox(
+                "Specific Country (Optional)",
+                countries_list,
+                index=0 if continent == "All Continents" else min(0, len(countries_list) - 1)
+            )
+        else:
+            country = "All Countries"
     
     st.markdown("---")
     st.markdown("### Your Profile Summary")
     st.info(f"""
-    **Age:** {age} years old  |  **Interest:** {interest}  |  **Duration:** {trip_duration} days
-    **Season:** {season}  |  **Weather:** {weather}  |  **Budget:** {budget}
-    **Travel Style:** {travel_style}  |  **Activity:** {activity_level}  |  **Accommodation:** {accommodation}
-    **Dietary:** {dietary}  |  **Visa:** {visa_requirement}
+    **Age:** {age} years old | **Interest:** {interest} | **Duration:** {trip_duration} days
+    **Season:** {season} | **Weather:** {weather} | **Budget:** {budget}
+    **Preferred Region:** {continent} | **Country:** {country}
     """)
     
     st.markdown("---")
@@ -1414,11 +1462,8 @@ def personalization_page():
         "weather": weather,
         "season": season,
         "budget": budget,
-        "travel_style": travel_style,
-        "activity_level": activity_level,
-        "accommodation": accommodation,
-        "dietary": dietary,
-        "visa_requirement": visa_requirement
+        "continent": continent,
+        "country": country
     }
     
     # DEBUG: Show if preferences changed
@@ -1437,8 +1482,25 @@ def personalization_page():
             st.session_state.last_user_preferences = user_input
 
             with st.spinner("Finding your perfect destinations..."):
+                # Filter by continent and country if specified
+                filtered_master = master.copy()
+                
+                if continent != "All Continents":
+                    continent_map = {
+                        "Africa": "africa",
+                        "Asia": "asia",
+                        "Europe": "europe",
+                        "North America": "north_america",
+                        "Oceania": "oceania",
+                        "Middle East": "middle_east"
+                    }
+                    filtered_master = filtered_master[filtered_master['region'] == continent_map[continent]]
+                
+                if country != "All Countries":
+                    filtered_master = filtered_master[filtered_master['country'] == country]
+                
                 # FEATURE 4: TOP 5 RECOMMENDATIONS
-                ranked = compute_similarity(master, user_input, patterns).head(5)
+                ranked = compute_similarity(filtered_master, user_input, patterns).head(5)
 
             # CACHE RECOMMENDATIONS IN SESSION STATE
             st.session_state.cached_ranked_results = ranked
@@ -1665,15 +1727,61 @@ def itinerary_page():
         key="itinerary_duration"
     )
     
+    st.markdown("---")
+    st.markdown("### 🍽️ Itinerary Preferences")
+    
+    col1, col2, col3 = st.columns([1, 1, 1])
+    
+    with col1:
+        dietary = st.selectbox(
+            "Dietary Preferences",
+            ["Omnivore", "Vegetarian", "Vegan", "Gluten-Free"],
+            index=0,
+            key="itinerary_dietary"
+        )
+    
+    with col2:
+        accommodation = st.selectbox(
+            "Accommodation Type",
+            ["Hostel", "Hotel", "Resort", "Airbnb", "Luxury"],
+            index=1,
+            key="itinerary_accommodation"
+        )
+    
+    with col3:
+        accessibility = st.selectbox(
+            "Accessibility Needs",
+            ["No specific needs", "Wheelchair accessible", "Mobility assistance", "Visual assistance", "Hearing assistance"],
+            index=0,
+            key="itinerary_accessibility"
+        )
+    
+    # Store itinerary preferences in session state
+    st.session_state.itinerary_preferences = {
+        'dietary': dietary,
+        'accommodation': accommodation,
+        'accessibility': accessibility
+    }
+    
+    st.markdown("---")
+    
     if st.button("Generate Itinerary", type="primary", use_container_width=True, key="generate_itinerary_btn"):
         with st.spinner("Generating itinerary..."):
-            itinerary = generate_itinerary(city_row['city'], city_row['country'], duration, user_input, city_row)
-            st.session_state.current_itinerary = itinerary
+            # Merge itinerary preferences with user input
+            full_user_input = user_input.copy()
+            full_user_input.update(st.session_state.itinerary_preferences)
+            
+            itinerary = generate_itinerary(city_row['city'], city_row['country'], duration, full_user_input, city_row)
+            
+            # Clean the itinerary for PDF export (remove emojis and special chars)
+            cleaned_itinerary = clean_text_for_pdf(itinerary)
+            
+            st.session_state.current_itinerary = cleaned_itinerary
             st.session_state.current_city = city_row
-            st.session_state.current_user_input = user_input
+            st.session_state.current_user_input = full_user_input
             
             # CACHE ITINERARY
-            st.session_state.cached_itineraries[selected_city] = itinerary
+            st.session_state.cached_itineraries[selected_city] = cleaned_itinerary
             st.rerun()
     
     if st.session_state.current_itinerary:
