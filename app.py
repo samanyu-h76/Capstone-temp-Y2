@@ -1585,7 +1585,7 @@ def recommendations_page():
                 season,
                 interest
             )
-            st.info(advice)
+            st.write(advice)
             
             st.divider()
             
@@ -1608,9 +1608,9 @@ def recommendations_page():
             if lang != "English":
                 with st.spinner(f"Translating to {lang}..."):
                     translated = gemini_translate(description, lang)
-                    st.markdown(translated)
+                    st.write(translated)
             else:
-                st.markdown(description)
+                st.write(description)
             
             st.divider()
             
@@ -1667,7 +1667,7 @@ def recommendations_page():
                     season,
                     interest
                 )
-                st.info(advice)
+                st.write(advice)
                 
                 st.divider()
                 
@@ -1690,9 +1690,9 @@ def recommendations_page():
                 if lang != "English":
                     with st.spinner(f"Translating to {lang}..."):
                         translated = gemini_translate(description, lang)
-                        st.markdown(translated)
+                        st.write(translated)
                 else:
-                    st.markdown(description)
+                    st.write(description)
                 
                 st.divider()
                 
