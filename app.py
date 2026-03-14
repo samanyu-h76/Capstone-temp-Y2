@@ -1561,29 +1561,36 @@ def recommendations_page():
         
         st.markdown("### 🌟 Your Top Pick")
         with st.container(border=True):
-            col1, col2 = st.columns([2, 1])
+            # Full width image on top
+            st.image(get_city_image_pexels(top_row['city']), use_container_width=True)
             
+            # Info section
+            col1, col2, col3 = st.columns([2, 1, 1])
             with col1:
-                # FEATURE 5: PEXELS IMAGE
-                st.image(get_city_image_pexels(top_row['city']), use_container_width=True)
-            
-            with col2:
                 st.markdown(f"## {top_row['city']}")
                 st.markdown(f"### {top_row['country']}")
-                st.caption(f"📍 {top_row['region'].title()}")
-                st.markdown(f"⭐ **Rating:** {top_row['avg_rating']}/5.0")
-                st.markdown(f"🎯 **Match Score:** {top_row['final_score']:.2f}")
+            with col2:
+                st.caption(f"📍 **Region:** {top_row['region'].title()}")
+                st.caption(f"⭐ **Rating:** {top_row['avg_rating']:.1f}/5.0")
+            with col3:
+                st.caption(f"🎯 **Match:** {top_row['final_score']:.2f}")
             
-            with st.expander("🌤️ Weather & Activity Suggestions", expanded=True):
-                advice = gemini_weather_advice(
-                    top_row["city"],
-                    user_input["weather"],
-                    season,
-                    interest
-                )
-                st.info(advice)
+            st.divider()
             
-            st.write("📝 **Description:**")
+            # Weather & Activity Suggestions - Full Width
+            st.subheader("🌤️ Weather & Activity Suggestions")
+            advice = gemini_weather_advice(
+                top_row["city"],
+                user_input["weather"],
+                season,
+                interest
+            )
+            st.info(advice)
+            
+            st.divider()
+            
+            # Description section - Full Width
+            st.subheader("📝 Description")
             
             # Generate description if not in dataset
             description = top_row.get("description", None)
@@ -1601,20 +1608,23 @@ def recommendations_page():
             if lang != "English":
                 with st.spinner(f"Translating to {lang}..."):
                     translated = gemini_translate(description, lang)
-                    st.write(translated)
+                    st.markdown(translated)
             else:
-                st.write(description)
+                st.markdown(description)
             
-            st.write("**Was this recommendation helpful?**")
+            st.divider()
+            
+            # Feedback section
+            st.subheader("How helpful was this recommendation?")
             col1, col2, col3 = st.columns([1, 1, 8])
             with col1:
-                if st.button("👍 Yes", key=f"up_top_{top_row['city']}"):
+                if st.button("👍 Yes", key=f"up_top_{top_row['city']}", use_container_width=True):
                     save_feedback(top_row["city"], "up")
-                    st.success("Thanks!")
+                    st.success("Thanks for the feedback!")
             with col2:
-                if st.button("👎 No", key=f"down_top_{top_row['city']}"):
+                if st.button("👎 No", key=f"down_top_{top_row['city']}", use_container_width=True):
                     save_feedback(top_row["city"], "down")
-                    st.success("Thanks!")
+                    st.success("Thanks for the feedback!")
     
     st.markdown("---")
     
@@ -1624,34 +1634,45 @@ def recommendations_page():
         
         for idx, (i, (_, row)) in enumerate(enumerate(ranked.iloc[1:].iterrows(), 2)):
             with st.container(border=True):
+                # Header section
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.markdown(f"## {i}. {row['city']}, {row['country']}")
+                with col2:
+                    st.caption(f"⭐ {row['avg_rating']:.1f}/5.0")
+                
+                # Two column layout: Image and Info
                 col1, col2 = st.columns([2, 1])
                 
                 with col1:
-                    st.markdown(f"### {i}. {row['city']}, {row['country']}")
-                    st.caption(f"⭐ Rating: {row['avg_rating']}/5.0 | 🎯 Match Score: {row['final_score']:.2f}")
+                    st.caption(f"🎯 **Match Score:** {row['final_score']:.2f}")
                     
                     # Show AI Confidence if available
                     if 'ai_confidence' in row:
-                        st.info(f"🤖 **AI Confidence:** {row['ai_confidence']}%")
+                        st.caption(f"🤖 **AI Confidence:** {row['ai_confidence']}%")
                         if 'ai_explanation' in row:
-                            st.caption(f"**Why this match:** {row['ai_explanation']}")
+                            st.caption(f"✨ {row['ai_explanation']}")
                 
                 with col2:
                     # FEATURE 5: PEXELS IMAGE
                     st.image(get_city_image_pexels(row['city']), use_container_width=True)
                 
-                # Weather & Activity Suggestions
-                with st.expander("🌤️ Weather & Activity Suggestions"):
-                    advice = gemini_weather_advice(
-                        row["city"],
-                        user_input["weather"],
-                        season,
-                        interest
-                    )
-                    st.info(advice)
+                st.divider()
                 
-                # Description with Language Support
-                st.write("📝 **Description:**")
+                # Weather & Activity Suggestions - Full Width, Not Collapsed by Default
+                st.subheader("🌤️ Weather & Activity Suggestions")
+                advice = gemini_weather_advice(
+                    row["city"],
+                    user_input["weather"],
+                    season,
+                    interest
+                )
+                st.info(advice)
+                
+                st.divider()
+                
+                # Description with Language Support - Full Width
+                st.subheader("📝 Description")
                 
                 # Generate description if not in dataset
                 description = row.get("description", None)
@@ -1669,21 +1690,23 @@ def recommendations_page():
                 if lang != "English":
                     with st.spinner(f"Translating to {lang}..."):
                         translated = gemini_translate(description, lang)
-                        st.write(translated)
+                        st.markdown(translated)
                 else:
-                    st.write(description)
+                    st.markdown(description)
+                
+                st.divider()
                 
                 # Feedback buttons
-                st.write("**Was this recommendation helpful?**")
+                st.subheader("How helpful was this recommendation?")
                 col1, col2, col3 = st.columns([1, 1, 8])
                 with col1:
-                    if st.button("👍 Yes", key=f"up_pick_{i}_{row['city']}"):
+                    if st.button("👍 Yes", key=f"up_pick_{i}_{row['city']}", use_container_width=True):
                         save_feedback(row["city"], "up")
-                        st.success("Thanks!")
+                        st.success("Thanks for the feedback!")
                 with col2:
-                    if st.button("👎 No", key=f"down_pick_{i}_{row['city']}"):
+                    if st.button("👎 No", key=f"down_pick_{i}_{row['city']}", use_container_width=True):
                         save_feedback(row["city"], "down")
-                        st.success("Thanks!")
+                        st.success("Thanks for the feedback!")
 
 def itinerary_page():
     st.title("📅 Itinerary Generator")
