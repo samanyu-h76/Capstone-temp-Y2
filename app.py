@@ -1416,8 +1416,8 @@ def personalization_page():
         
         continent = st.selectbox(
             "Preferred Continent",
-            ["All Continents", "Africa", "Asia", "Europe", "North America", "Oceania", "Middle East"],
-            index=["All Continents", "Africa", "Asia", "Europe", "North America", "Oceania", "Middle East"].index(cached_data.get('continent', 'All Continents'))
+            ["All Continents", "Africa", "Asia", "Europe", "North America", "South America", "Oceania", "Middle East"],
+            index=["All Continents", "Africa", "Asia", "Europe", "North America", "South America", "Oceania", "Middle East"].index(cached_data.get('continent', 'All Continents'))
         )
         
         # Get countries based on continent selection
@@ -1430,6 +1430,7 @@ def personalization_page():
                     "Asia": "asia",
                     "Europe": "europe",
                     "North America": "north_america",
+                    "South America": "south_america",
                     "Oceania": "oceania",
                     "Middle East": "middle_east"
                 }
@@ -1491,6 +1492,7 @@ def personalization_page():
                         "Asia": "asia",
                         "Europe": "europe",
                         "North America": "north_america",
+                        "South America": "south_america",
                         "Oceania": "oceania",
                         "Middle East": "middle_east"
                     }
