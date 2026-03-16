@@ -6,7 +6,7 @@ from datetime import datetime
 import os
 import hashlib
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import credentials, firestore, auth as firebase_auth
 import json
 import uuid
 from reportlab.lib.pagesizes import letter, A4
@@ -22,6 +22,10 @@ from moviepy import *
 import tempfile
 import re
 import random
+try:
+    import pyrebase4 as pyrebase
+except ImportError:
+    pyrebase = None
 
 # =========================
 # CONFIG
@@ -38,6 +42,19 @@ st.set_page_config(
 # =========================
 def initialize_session_state():
     """Initialize all session state variables properly - this runs on every page load"""
+    
+    # Authentication variables
+    if 'user' not in st.session_state:
+        st.session_state.user = None
+    
+    if 'user_id' not in st.session_state:
+        st.session_state.user_id = None
+    
+    if 'user_email' not in st.session_state:
+        st.session_state.user_email = None
+    
+    if 'is_authenticated' not in st.session_state:
+        st.session_state.is_authenticated = False
     
     # Basic session variables
     if 'session_id' not in st.session_state:
@@ -188,6 +205,32 @@ def initialize_gemini():
 initialize_gemini()
 
 # -------------------------
+# FIREBASE AUTHENTICATION SETUP
+# -------------------------
+FIREBASE_AUTH_AVAILABLE = False
+pyrebase_auth = None
+
+def initialize_firebase_auth():
+    """Initialize Firebase Authentication with Pyrebase for client-side auth"""
+    global FIREBASE_AUTH_AVAILABLE, pyrebase_auth
+    
+    try:
+        if pyrebase is None:
+            return False
+        
+        if "FIREBASE_CONFIG" not in st.secrets:
+            return False
+        
+        firebase_config = dict(st.secrets["FIREBASE_CONFIG"])
+        pyrebase_auth = pyrebase.initialize_app(firebase_config)
+        FIREBASE_AUTH_AVAILABLE = True
+        return True
+    except Exception as e:
+        return False
+
+initialize_firebase_auth()
+
+# -------------------------
 # DATASET LOADING
 # -------------------------
 @st.cache_data
@@ -301,6 +344,65 @@ def clean_text_for_pdf(text):
     text = text.replace('☆', '*')
     
     return text.strip()
+
+# =========================
+# AUTHENTICATION FUNCTIONS
+# =========================
+def sign_up(email, password, name):
+    """Sign up a new user with Firebase"""
+    try:
+        if not FIREBASE_AUTH_AVAILABLE:
+            return False, "Authentication service not available"
+        
+        # Create user with Firebase Admin SDK
+        user = firebase_auth.create_user(
+            email=email,
+            password=password,
+            display_name=name
+        )
+        
+        # Store user profile in Firestore
+        if db:
+            db.collection('users').document(user.uid).set({
+                'email': email,
+                'name': name,
+                'created_at': datetime.now(),
+                'user_id': user.uid
+            })
+        
+        return True, "Sign up successful! Please log in."
+    except firebase_admin.auth.EmailAlreadyExistsError:
+        return False, "Email already exists"
+    except firebase_admin.auth.InvalidPasswordError:
+        return False, "Password is too weak (min 6 characters)"
+    except Exception as e:
+        return False, str(e)
+
+def sign_in(email, password):
+    """Sign in user with Firebase"""
+    try:
+        if not FIREBASE_AUTH_AVAILABLE or pyrebase_auth is None:
+            return False, None, None, "Authentication service not available"
+        
+        auth = pyrebase_auth.auth()
+        user = auth.sign_in_with_email_and_password(email, password)
+        
+        user_id = user['localId']
+        user_email = user['email']
+        
+        return True, user_id, user_email, "Sign in successful!"
+    except Exception as e:
+        if "INVALID_LOGIN_CREDENTIALS" in str(e):
+            return False, None, None, "Invalid email or password"
+        return False, None, None, str(e)
+
+def sign_out():
+    """Sign out the current user"""
+    st.session_state.user = None
+    st.session_state.user_id = None
+    st.session_state.user_email = None
+    st.session_state.is_authenticated = False
+    st.rerun()
 
 def get_age_group(age):
     if age <= 25:
@@ -1984,6 +2086,23 @@ Provide a helpful, concise answer about travel."""
                         st.error(f"Error: {str(e)}")
 
 # =========================
+# AUTHENTICATION UI
+# =========================
+def auth_page():
+    """Authentication page for login and signup"""
+    from pages.auth_pages import login_page, signup_page
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        tab1, tab2 = st.tabs(["Login", "Sign Up"])
+        
+        with tab1:
+            login_page()
+        
+        with tab2:
+            signup_page()
+
+# =========================
 # NAVIGATION
 # =========================
 pages = {
@@ -1995,31 +2114,66 @@ pages = {
     "💬 Chatbot": chatbot_page,
 }
 
-st.sidebar.title("Navigation")
-selected_page = st.sidebar.radio("Go to:", list(pages.keys()))
+# Check authentication and show appropriate content
+initialize_session_state()
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("### About")
-st.sidebar.markdown("""
+if not st.session_state.is_authenticated:
+    st.sidebar.title("Tourism Engine")
+    st.sidebar.info("🔐 Please log in to access all features")
+    
+    if st.sidebar.button("Login / Sign Up", use_container_width=True, type="primary"):
+        st.session_state.show_auth = True
+    
+    if st.session_state.get("show_auth", False):
+        auth_page()
+    else:
+        st.title("Welcome to AI Cultural Tourism Engine")
+        st.markdown("""
+        This platform uses AI to recommend personalized travel destinations based on your preferences.
+        
+        **Login to:**
+        - Get personalized destination recommendations
+        - Save your preferences
+        - Generate custom itineraries
+        - Give feedback on recommendations
+        
+        Click the "Login / Sign Up" button to get started!
+        """)
+else:
+    st.sidebar.title("Navigation")
+    
+    # Show user info in sidebar
+    st.sidebar.markdown(f"👤 Logged in as: **{st.session_state.user_email}**")
+    
+    if st.sidebar.button("Logout", use_container_width=True):
+        sign_out()
+    
+    st.sidebar.markdown("---")
+    selected_page = st.sidebar.radio("Go to:", list(pages.keys()))
+    
+    st.sidebar.markdown("---")
+
+    st.sidebar.markdown("### About")
+    st.sidebar.markdown("""
 **AI Cultural Tourism Platform**
 
 *Fully Integrated with Gemini AI, Firebase & Pexels*
 
-### ✨ NEW FEATURES:
-1. ✅ **Cuisine Interest** - Added "Cuisine" to interest options
-2. ✅ **Session Caching** - Persistent data across page reloads
-3. ✅ **Improved Similarity** - Gaussian functions & dynamic weights
-4. ✅ **Top 5 Picks** - Featured card + 4 horizontal recommendations
-5. ✅ **Pexels Images** - High-quality travel photos
+### ✨ FEATURES:
+1. ✅ **Personalized Recommendations** - AI-powered destination matches
+2. ✅ **Custom Itineraries** - Day-by-day travel plans
+3. ✅ **Multi-language Support** - Get descriptions in any language
+4. ✅ **Feedback System** - Help us improve recommendations
+5. ✅ **Video Guides** - Watch destination guides
 
-### 📊 CACHING SYSTEM:
-- `cached_user_input` - Personalization data persists
-- `cached_ranked_results` - Recommendations cached
-- `cached_itineraries` - Stores generated itineraries per city
+### 🔐 YOUR ACCOUNT:
+- Secure Firebase authentication
+- Your feedback helps personalize results
+- All data is encrypted
 """)
-
-st.sidebar.markdown("---")
-st.sidebar.markdown(f"*Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}*")
-
-# Render selected page
-pages[selected_page]()
+    
+    st.sidebar.markdown("---")
+    st.sidebar.markdown(f"*Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}*")
+    
+    # Render selected page
+    pages[selected_page]()
