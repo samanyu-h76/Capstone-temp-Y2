@@ -2086,12 +2086,77 @@ Provide a helpful, concise answer about travel."""
                         st.error(f"Error: {str(e)}")
 
 # =========================
-# AUTHENTICATION UI
+# AUTHENTICATION UI FUNCTIONS
 # =========================
+def login_page():
+    """Login page with email authentication"""
+    st.markdown("## Welcome Back!")
+    st.markdown("Sign in to your account to continue")
+    
+    st.subheader("Login with Email")
+    
+    email = st.text_input("Email", key="login_email_field")
+    password = st.text_input("Password", type="password", key="login_password_field")
+    
+    if st.button("Sign In", use_container_width=True, type="primary", key="login_signin_submit"):
+        if not email or not password:
+            st.error("Please enter both email and password")
+        elif not FIREBASE_AUTH_AVAILABLE:
+            st.error("Authentication service unavailable")
+        else:
+            success, user_id, user_email, message = sign_in(email, password)
+            
+            if success:
+                st.session_state.is_authenticated = True
+                st.session_state.user_id = user_id
+                st.session_state.user_email = user_email
+                st.session_state.user = {"email": user_email, "id": user_id}
+                st.session_state.show_auth = False
+                st.success(message)
+                st.rerun()
+            else:
+                st.error(message)
+
+def signup_page():
+    """Sign up page for new users"""
+    st.markdown("## Create Your Account")
+    st.markdown("Join our community to get personalized travel recommendations")
+    
+    name = st.text_input("Full Name", key="signup_name_field")
+    email = st.text_input("Email", key="signup_email_field")
+    password = st.text_input("Password (min 6 characters)", type="password", key="signup_password_field")
+    password_confirm = st.text_input("Confirm Password", type="password", key="signup_password_confirm_field")
+    
+    if st.button("Create Account", use_container_width=True, type="primary", key="signup_create_submit"):
+        if not name or not email or not password:
+            st.error("Please fill in all fields")
+        elif password != password_confirm:
+            st.error("Passwords do not match")
+        elif len(password) < 6:
+            st.error("Password must be at least 6 characters")
+        elif not FIREBASE_AUTH_AVAILABLE:
+            st.error("Authentication service unavailable")
+        else:
+            success, message = sign_up(email, password, name)
+            
+            if success:
+                st.success(message)
+                st.markdown("### Now signing you in...")
+                success_login, user_id, user_email, login_msg = sign_in(email, password)
+                
+                if success_login:
+                    st.session_state.is_authenticated = True
+                    st.session_state.user_id = user_id
+                    st.session_state.user_email = user_email
+                    st.session_state.user = {"email": user_email, "id": user_id}
+                    st.session_state.show_auth = False
+                    st.success("Account created and logged in!")
+                    st.rerun()
+            else:
+                st.error(message)
+
 def auth_page():
     """Authentication page for login and signup"""
-    from pages.auth_pages import login_page, signup_page
-    
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         tab1, tab2 = st.tabs(["Login", "Sign Up"])
