@@ -8,3 +8,4 @@ python-dotenv
 pyttsx3
 moviepy
 pyrebase4
+streamlit-oauth
