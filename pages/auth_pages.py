@@ -1,5 +1,4 @@
 import streamlit as st
-from streamlit_oauth import OAuth2Component
 import json
 
 def login_page():
@@ -8,6 +7,8 @@ def login_page():
     st.markdown("Sign in to your account to continue")
     
     # Import auth functions from main app
+    import sys
+    sys.path.insert(0, '/vercel/share/v0-project')
     from app import sign_in, FIREBASE_AUTH_AVAILABLE
     
     tab1, tab2 = st.tabs(["Email Login", "Google Sign In"])
@@ -52,7 +53,9 @@ def signup_page():
     st.markdown("Join our community to get personalized travel recommendations")
     
     # Import auth functions from main app
-    from app import sign_up, FIREBASE_AUTH_AVAILABLE
+    import sys
+    sys.path.insert(0, '/vercel/share/v0-project')
+    from app import sign_up, sign_in, FIREBASE_AUTH_AVAILABLE
     
     col1, col2 = st.columns([1, 1])
     
@@ -77,7 +80,6 @@ def signup_page():
                 if success:
                     st.success(message)
                     st.markdown("### Now signing you in...")
-                    from app import sign_in
                     success_login, user_id, user_email, login_msg = sign_in(email, password)
                     
                     if success_login:
