@@ -7,3 +7,4 @@ firebase-admin
 python-dotenv
 pyttsx3
 moviepy
+pyrebase4
