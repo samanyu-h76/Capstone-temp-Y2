@@ -2121,7 +2121,7 @@ if not st.session_state.is_authenticated:
     st.sidebar.title("Tourism Engine")
     st.sidebar.info("🔐 Please log in to access all features")
     
-    if st.sidebar.button("Login / Sign Up", use_container_width=True, type="primary"):
+    if st.sidebar.button("Login / Sign Up", use_container_width=True, type="primary", key="auth_button"):
         st.session_state.show_auth = True
     
     if st.session_state.get("show_auth", False):
@@ -2145,11 +2145,11 @@ else:
     # Show user info in sidebar
     st.sidebar.markdown(f"👤 Logged in as: **{st.session_state.user_email}**")
     
-    if st.sidebar.button("Logout", use_container_width=True):
+    if st.sidebar.button("Logout", use_container_width=True, key="logout_button"):
         sign_out()
     
     st.sidebar.markdown("---")
-    selected_page = st.sidebar.radio("Go to:", list(pages.keys()))
+    selected_page = st.sidebar.radio("Go to:", list(pages.keys()), key="page_radio")
     
     st.sidebar.markdown("---")
 
