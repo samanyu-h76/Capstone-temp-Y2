@@ -384,7 +384,18 @@ def sign_up(email, password, name):
         print(f"[v0] DEBUG: Calling Firebase signup endpoint")
         response = requests.post(url, json=payload, timeout=10)
         print(f"[v0] DEBUG: Firebase response status: {response.status_code}")
-        data = response.json()
+        
+        # Show debug info on UI
+        st.write("DEBUG STATUS:", response.status_code)
+        st.write("DEBUG TEXT:", response.text)
+        
+        # Try to parse JSON response
+        try:
+            data = response.json()
+        except:
+            st.error(f"Non-JSON response: {response.text}")
+            return False, f"Non-JSON response: {response.text}"
+        
         print(f"[v0] DEBUG: Firebase response: {data}")
         
         if response.status_code == 200:
@@ -434,8 +445,17 @@ def sign_in(email, password):
             "returnSecureToken": True
         }
         
-        response = requests.post(url, json=payload)
-        data = response.json()
+        response = requests.post(url, json=payload, timeout=10)
+        
+        # Show debug info on UI
+        st.write("DEBUG STATUS:", response.status_code)
+        st.write("DEBUG TEXT:", response.text)
+        
+        # Try to parse JSON response
+        try:
+            data = response.json()
+        except:
+            return False, None, None, f"Non-JSON response: {response.text}"
         
         if response.status_code == 200:
             user_id = data['localId']
@@ -1485,7 +1505,7 @@ def home_page():
         st.markdown("---")
         st.subheader("🎥 Video Status")
         if PEXELS_AVAILABLE:
-            st.success("✅ Pexels API Connected")
+            st.success("��� Pexels API Connected")
         else:
             st.error("❌ Pexels API Unavailable")
         
@@ -2155,6 +2175,24 @@ def login_page():
     st.markdown("## Welcome Back!")
     st.markdown("Sign in to your account to continue")
     
+    # DEBUG: Show Firebase status
+    if not FIREBASE_AUTH_AVAILABLE:
+        with st.expander("🔧 Firebase Setup Required", expanded=True):
+            st.error("Firebase authentication is not configured")
+            st.markdown("""
+            **To fix this:**
+            1. Get your Firebase Web API Key from [Firebase Console](https://console.firebase.google.com)
+            2. Add to `.streamlit/secrets.toml`:
+            ```
+            FIREBASE_API_KEY = "your-api-key-here"
+            FIREBASE_PROJECT_ID = "tourism-recommendation-engine"
+            ```
+            3. Restart the app
+            
+            **Check the Streamlit terminal for [v0] DEBUG messages to see what's missing.**
+            """)
+            return
+    
     st.subheader("Login with Email")
     
     email = st.text_input("Email", key="login_email_field")
@@ -2163,8 +2201,6 @@ def login_page():
     if st.button("Sign In", use_container_width=True, type="primary", key="login_signin_submit"):
         if not email or not password:
             st.error("Please enter both email and password")
-        elif not FIREBASE_AUTH_AVAILABLE:
-            st.error("Authentication service unavailable")
         else:
             success, user_id, user_email, message = sign_in(email, password)
             
@@ -2184,6 +2220,24 @@ def signup_page():
     st.markdown("## Create Your Account")
     st.markdown("Join our community to get personalized travel recommendations")
     
+    # DEBUG: Show Firebase status
+    if not FIREBASE_AUTH_AVAILABLE:
+        with st.expander("🔧 Firebase Setup Required", expanded=True):
+            st.error("Firebase authentication is not configured")
+            st.markdown("""
+            **To fix this:**
+            1. Get your Firebase Web API Key from [Firebase Console](https://console.firebase.google.com)
+            2. Add to `.streamlit/secrets.toml`:
+            ```
+            FIREBASE_API_KEY = "your-api-key-here"
+            FIREBASE_PROJECT_ID = "tourism-recommendation-engine"
+            ```
+            3. Restart the app
+            
+            **Check the Streamlit terminal for [v0] DEBUG messages to see what's missing.**
+            """)
+            return
+    
     name = st.text_input("Full Name", key="signup_name_field")
     email = st.text_input("Email", key="signup_email_field")
     password = st.text_input("Password (min 6 characters)", type="password", key="signup_password_field")
@@ -2196,8 +2250,6 @@ def signup_page():
             st.error("Passwords do not match")
         elif len(password) < 6:
             st.error("Password must be at least 6 characters")
-        elif not FIREBASE_AUTH_AVAILABLE:
-            st.error("Authentication service unavailable")
         else:
             success, message = sign_up(email, password, name)
             
