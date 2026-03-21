@@ -6,7 +6,7 @@ from datetime import datetime
 import os
 import hashlib
 import firebase_admin
-from firebase_admin import credentials, firestore, auth as firebase_auth
+from firebase_admin import credentials, firestore
 import json
 import uuid
 from reportlab.lib.pagesizes import letter, A4
@@ -22,10 +22,6 @@ from moviepy import *
 import tempfile
 import re
 import random
-try:
-    import pyrebase4 as pyrebase
-except ImportError:
-    pyrebase = None
 
 # =========================
 # CONFIG
@@ -205,30 +201,36 @@ def initialize_gemini():
 initialize_gemini()
 
 # -------------------------
-# FIREBASE AUTHENTICATION SETUP
+# FIREBASE AUTHENTICATION SETUP (REST API)
 # -------------------------
 FIREBASE_AUTH_AVAILABLE = False
-pyrebase_auth = None
+FIREBASE_API_KEY = None
+FIREBASE_PROJECT_ID = None
 
 def initialize_firebase_auth():
-    """Initialize Firebase Authentication with Pyrebase for client-side auth"""
-    global FIREBASE_AUTH_AVAILABLE, pyrebase_auth
+    """Initialize Firebase Authentication using REST API"""
+    global FIREBASE_AUTH_AVAILABLE, FIREBASE_API_KEY, FIREBASE_PROJECT_ID
     
     try:
-        if pyrebase is None:
+        # Check if API key is in secrets
+        if "FIREBASE_API_KEY" not in st.secrets:
             return False
         
-        if "FIREBASE_CONFIG" not in st.secrets:
+        if "FIREBASE_PROJECT_ID" not in st.secrets:
             return False
         
-        firebase_config = dict(st.secrets["FIREBASE_CONFIG"])
-        pyrebase_auth = pyrebase.initialize_app(firebase_config)
+        FIREBASE_API_KEY = st.secrets["FIREBASE_API_KEY"]
+        FIREBASE_PROJECT_ID = st.secrets["FIREBASE_PROJECT_ID"]
+        
         FIREBASE_AUTH_AVAILABLE = True
         return True
     except Exception as e:
         return False
 
-initialize_firebase_auth()
+# Initialize Firebase Auth on startup
+if "firebase_init_checked" not in st.session_state:
+    initialize_firebase_auth()
+    st.session_state.firebase_init_checked = True
 
 # -------------------------
 # DATASET LOADING
@@ -349,52 +351,93 @@ def clean_text_for_pdf(text):
 # AUTHENTICATION FUNCTIONS
 # =========================
 def sign_up(email, password, name):
-    """Sign up a new user with Firebase"""
+    """Sign up a new user with Firebase REST API"""
     try:
-        if not FIREBASE_AUTH_AVAILABLE:
-            return False, "Authentication service not available"
+        if not FIREBASE_AUTH_AVAILABLE or not FIREBASE_API_KEY:
+            return False, "Firebase not configured. Add FIREBASE_API_KEY to .streamlit/secrets.toml"
         
-        # Create user with Firebase Admin SDK
-        user = firebase_auth.create_user(
-            email=email,
-            password=password,
-            display_name=name
-        )
+        # Firebase REST API endpoint for sign up
+        url = f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={FIREBASE_API_KEY}"
         
-        # Store user profile in Firestore
-        if db:
-            db.collection('users').document(user.uid).set({
-                'email': email,
-                'name': name,
-                'created_at': datetime.now(),
-                'user_id': user.uid
-            })
+        payload = {
+            "email": email,
+            "password": password,
+            "returnSecureToken": True
+        }
         
-        return True, "Sign up successful! Please log in."
-    except firebase_admin.auth.EmailAlreadyExistsError:
-        return False, "Email already exists"
-    except firebase_admin.auth.InvalidPasswordError:
-        return False, "Password is too weak (min 6 characters)"
+        response = requests.post(url, json=payload)
+        data = response.json()
+        
+        if response.status_code == 200:
+            user_id = data['localId']
+            id_token = data['idToken']
+            
+            # Store user profile in Firestore
+            if db:
+                try:
+                    db.collection('users').document(user_id).set({
+                        'email': email,
+                        'name': name,
+                        'created_at': datetime.now(),
+                        'user_id': user_id
+                    })
+                except Exception as firestore_error:
+                    pass  # Continue even if Firestore fails
+            
+            return True, "Sign up successful!"
+        else:
+            error_msg = data.get('error', {}).get('message', 'Unknown error')
+            
+            if 'EMAIL_EXISTS' in error_msg:
+                return False, "Email already exists. Try logging in instead."
+            elif 'WEAK_PASSWORD' in error_msg:
+                return False, "Password is too weak. Use at least 6 characters."
+            elif 'INVALID_EMAIL' in error_msg:
+                return False, "Invalid email format"
+            
+            return False, f"Sign up failed: {error_msg}"
+            
     except Exception as e:
-        return False, str(e)
+        return False, f"An error occurred: {str(e)}"
 
 def sign_in(email, password):
-    """Sign in user with Firebase"""
+    """Sign in user with Firebase REST API"""
     try:
-        if not FIREBASE_AUTH_AVAILABLE or pyrebase_auth is None:
-            return False, None, None, "Authentication service not available"
+        if not FIREBASE_AUTH_AVAILABLE or not FIREBASE_API_KEY:
+            return False, None, None, "Firebase not configured. Add FIREBASE_API_KEY to .streamlit/secrets.toml"
         
-        auth = pyrebase_auth.auth()
-        user = auth.sign_in_with_email_and_password(email, password)
+        # Firebase REST API endpoint for sign in
+        url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={FIREBASE_API_KEY}"
         
-        user_id = user['localId']
-        user_email = user['email']
+        payload = {
+            "email": email,
+            "password": password,
+            "returnSecureToken": True
+        }
         
-        return True, user_id, user_email, "Sign in successful!"
+        response = requests.post(url, json=payload)
+        data = response.json()
+        
+        if response.status_code == 200:
+            user_id = data['localId']
+            user_email = data['email']
+            id_token = data['idToken']
+            
+            return True, user_id, user_email, "Sign in successful!"
+        else:
+            error_msg = data.get('error', {}).get('message', 'Unknown error')
+            
+            if 'INVALID_LOGIN_CREDENTIALS' in error_msg:
+                return False, None, None, "Invalid email or password"
+            elif 'USER_DISABLED' in error_msg:
+                return False, None, None, "This account has been disabled"
+            elif 'OPERATION_NOT_ALLOWED' in error_msg:
+                return False, None, None, "Email/password sign in is not enabled"
+            
+            return False, None, None, f"Sign in failed: {error_msg}"
+            
     except Exception as e:
-        if "INVALID_LOGIN_CREDENTIALS" in str(e):
-            return False, None, None, "Invalid email or password"
-        return False, None, None, str(e)
+        return False, None, None, f"Sign in error: {str(e)}"
 
 def sign_out():
     """Sign out the current user"""
