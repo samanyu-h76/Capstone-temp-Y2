@@ -214,23 +214,34 @@ def initialize_firebase_auth():
     try:
         # Check if API key is in secrets
         if "FIREBASE_API_KEY" not in st.secrets:
+            print("[v0] DEBUG: FIREBASE_API_KEY not found in secrets")
             return False
         
         if "FIREBASE_PROJECT_ID" not in st.secrets:
+            print("[v0] DEBUG: FIREBASE_PROJECT_ID not found in secrets")
             return False
         
         FIREBASE_API_KEY = st.secrets["FIREBASE_API_KEY"]
         FIREBASE_PROJECT_ID = st.secrets["FIREBASE_PROJECT_ID"]
         
+        print(f"[v0] DEBUG: Firebase initialized with API Key: {FIREBASE_API_KEY[:20]}...")
+        print(f"[v0] DEBUG: Firebase Project ID: {FIREBASE_PROJECT_ID}")
+        
         FIREBASE_AUTH_AVAILABLE = True
         return True
     except Exception as e:
+        print(f"[v0] DEBUG: Firebase init error: {str(e)}")
         return False
 
 # Initialize Firebase Auth on startup
 if "firebase_init_checked" not in st.session_state:
-    initialize_firebase_auth()
+    result = initialize_firebase_auth()
     st.session_state.firebase_init_checked = True
+    print(f"[v0] DEBUG: Firebase auth available: {FIREBASE_AUTH_AVAILABLE}")
+    if not FIREBASE_AUTH_AVAILABLE:
+        print("[v0] DEBUG: Add these to .streamlit/secrets.toml:")
+        print('[v0] DEBUG: FIREBASE_API_KEY = "your_web_api_key_here"')
+        print('[v0] DEBUG: FIREBASE_PROJECT_ID = "tourism-recommendation-engine"')
 
 # -------------------------
 # DATASET LOADING
@@ -353,8 +364,13 @@ def clean_text_for_pdf(text):
 def sign_up(email, password, name):
     """Sign up a new user with Firebase REST API"""
     try:
+        print(f"[v0] DEBUG: Sign up attempt for {email}")
+        print(f"[v0] DEBUG: FIREBASE_AUTH_AVAILABLE={FIREBASE_AUTH_AVAILABLE}, FIREBASE_API_KEY set={bool(FIREBASE_API_KEY)}")
+        
         if not FIREBASE_AUTH_AVAILABLE or not FIREBASE_API_KEY:
-            return False, "Firebase not configured. Add FIREBASE_API_KEY to .streamlit/secrets.toml"
+            msg = "Firebase not configured. Add FIREBASE_API_KEY to .streamlit/secrets.toml"
+            print(f"[v0] DEBUG: {msg}")
+            return False, msg
         
         # Firebase REST API endpoint for sign up
         url = f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={FIREBASE_API_KEY}"
@@ -365,8 +381,11 @@ def sign_up(email, password, name):
             "returnSecureToken": True
         }
         
-        response = requests.post(url, json=payload)
+        print(f"[v0] DEBUG: Calling Firebase signup endpoint")
+        response = requests.post(url, json=payload, timeout=10)
+        print(f"[v0] DEBUG: Firebase response status: {response.status_code}")
         data = response.json()
+        print(f"[v0] DEBUG: Firebase response: {data}")
         
         if response.status_code == 200:
             user_id = data['localId']
