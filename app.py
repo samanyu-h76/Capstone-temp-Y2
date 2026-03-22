@@ -1332,11 +1332,11 @@ def generate_itinerary_video(itinerary_text, city, country, user_input):
                     
                     subtitle_text = re.sub(r'\s+', ' ', subtitle_text).strip()
 
-if len(subtitle_text) > 70:
-    cut = subtitle_text[:67].rstrip()
-    if " " in cut:
-        cut = cut.rsplit(" ", 1)[0]
-    subtitle_text = cut + "..."
+                    if len(subtitle_text) > 70:
+                        cut = subtitle_text[:67].rstrip()
+                        if " " in cut:
+                            cut = cut.rsplit(" ", 1)[0]
+                        subtitle_text = cut + "..."
 
                     subtitle_text = location.get("caption", "").strip()
                     if not subtitle_text:
