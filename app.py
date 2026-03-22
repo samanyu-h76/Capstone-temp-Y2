@@ -2052,7 +2052,7 @@ def itinerary_page():
         st.text_area(
             "Full Itinerary",
             value=itinerary,
-            height=None,
+            height=1000,
             disabled=True,
             label_visibility="collapsed"
         )
