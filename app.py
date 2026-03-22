@@ -1221,7 +1221,7 @@ def generate_itinerary_video(itinerary_text, city, country, user_input):
                     img = img.resize((1280, 720))
                     frame = np.array(img)
 
-                    base_clip = ImageClip(frame).set_duration(2)
+                    base_clip = ImageClip(frame).with_duration(2)
 
                     caption_text = location.get(
                         "caption",
@@ -1235,7 +1235,7 @@ def generate_itinerary_video(itinerary_text, city, country, user_input):
                             color="white",
                             method="caption",
                             size=(1000, None)
-                        ).set_duration(2).set_position(("center", 620))
+                        ).with_duration(2).with_position(("center", 620))
 
                         composed = CompositeVideoClip([base_clip, caption], size=(1280, 720))
                     except Exception:
@@ -1260,12 +1260,12 @@ def generate_itinerary_video(itinerary_text, city, country, user_input):
                     color="yellow",
                     method="caption",
                     size=(1100, None)
-                ).set_duration(2).set_position(("center", "center"))
+                ).with_duration(2).with_position(("center", "center"))
 
-                day_header_bg = ColorClip(size=(1280, 720), color=(0, 0, 0)).set_duration(2)
+                day_header_bg = ColorClip(size=(1280, 720), color=(0, 0, 0)).with_duration(2)
                 day_header_video = CompositeVideoClip([day_header_bg, day_header_text], size=(1280, 720))
             except Exception:
-                day_header_video = ColorClip(size=(1280, 720), color=(0, 0, 0)).set_duration(1)
+                day_header_video = ColorClip(size=(1280, 720), color=(0, 0, 0)).with_duration(1)
 
             full_day_clip = concatenate_videoclips([day_header_video, day_body], method="compose")
             day_clips.append(full_day_clip)
@@ -1285,12 +1285,12 @@ def generate_itinerary_video(itinerary_text, city, country, user_input):
                 color="white",
                 method="caption",
                 size=(1100, None)
-            ).set_duration(3).set_position(("center", "center"))
+            ).with_duration(3).with_position(("center", "center"))
 
-            title_bg = ColorClip(size=(1280, 720), color=(25, 25, 112)).set_duration(3)
+            title_bg = ColorClip(size=(1280, 720), color=(25, 25, 112)).with_duration(3)
             title_slide = CompositeVideoClip([title_bg, title_text], size=(1280, 720))
         except Exception:
-            title_slide = ColorClip(size=(1280, 720), color=(25, 25, 112)).set_duration(2)
+            title_slide = ColorClip(size=(1280, 720), color=(25, 25, 112)).with_duration(2)
 
         final_video = concatenate_videoclips([title_slide, final_video], method="compose")
 
