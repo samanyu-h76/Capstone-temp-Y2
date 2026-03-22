@@ -18,7 +18,13 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
 from io import BytesIO
 import requests
 from PIL import Image as PILImage
-from moviepy import *
+from moviepy.editor import (
+    ImageClip,
+    TextClip,
+    CompositeVideoClip,
+    concatenate_videoclips,
+    ColorClip
+)
 import tempfile
 import re
 import random
@@ -1019,91 +1025,123 @@ WRITE EVERYTHING IN FULL DETAIL. INCLUDE ALL {duration} DAYS COMPLETELY."""
 def parse_itinerary_into_days(itinerary_text):
     """Parse itinerary text into structured day data"""
     days_data = []
-    
+
     day_pattern = r'\*\*Day\s+(\d+)\s*-\s*([^*]+)\*\*'
     day_matches = list(re.finditer(day_pattern, itinerary_text))
-    
+
+    if not day_matches:
+        # fallback parser if markdown **Day X** wasn't followed exactly
+        alt_pattern = r'Day\s+(\d+)\s*-\s*(.+)'
+        alt_matches = list(re.finditer(alt_pattern, itinerary_text))
+        if not alt_matches:
+            return []
+        day_matches = alt_matches
+
+    time_periods = ['Morning:', 'Lunch:', 'Afternoon:', 'Evening:', 'Tips:', 'Budget Tip:', 'Local Insight:']
+
     for i, match in enumerate(day_matches):
         day_num = match.group(1)
         day_title = match.group(2).strip()
-        
+
         start = match.end()
         end = day_matches[i + 1].start() if i + 1 < len(day_matches) else len(itinerary_text)
-        day_content = itinerary_text[start:end]
-        
+        day_content = itinerary_text[start:end].strip()
+
         locations = []
-        time_periods = ['Morning:', 'Lunch:', 'Afternoon:', 'Evening:']
-        
-        for period in time_periods:
+
+        for idx, period in enumerate(time_periods):
             if period in day_content:
                 start_idx = day_content.find(period)
-                next_period_idx = float('inf')
+                next_period_idx = len(day_content)
+
                 for next_period in time_periods:
-                    idx = day_content.find(next_period, start_idx + 1)
-                    if idx != -1:
-                        next_period_idx = min(next_period_idx, idx)
-                
-                if next_period_idx == float('inf'):
-                    next_period_idx = len(day_content)
-                
-                content = day_content[start_idx:next_period_idx].replace(period, '').strip()
-                
-                sentences = content.split('.')
-                first_sentence = sentences[0].strip() if sentences else ''
-                
-                words = first_sentence.split()
-                location = ' '.join(words[:2]) if len(words) > 1 else (words[0] if words else period.replace(':', ''))
-                
-                caption = f"{period.replace(':', '')}: {location}"
-                
-                locations.append({
-                    'time_period': period.replace(':', ''),
-                    'location': location,
-                    'caption': caption,
-                    'description': content[:80] if len(content) > 80 else content
-                })
-        
+                    found_idx = day_content.find(next_period, start_idx + len(period))
+                    if found_idx != -1 and found_idx < next_period_idx:
+                        next_period_idx = found_idx
+
+                content = day_content[start_idx + len(period):next_period_idx].strip()
+
+                if content:
+                    first_sentence = content.split('.')[0].strip()
+                    words = first_sentence.split()
+
+                    # slightly smarter fallback location extraction
+                    location = " ".join(words[:4]) if len(words) >= 4 else first_sentence[:40]
+                    if not location:
+                        location = day_title
+
+                    locations.append({
+                        'time_period': period.replace(':', ''),
+                        'location': location,
+                        'caption': f"{period.replace(':', '')}: {location}",
+                        'description': content[:140]
+                    })
+
+        if not locations:
+            locations = [{
+                'time_period': 'All Day',
+                'location': day_title,
+                'caption': f"Day {day_num}: {day_title}",
+                'description': day_content[:140] if day_content else 'Explore the city'
+            }]
+
         days_data.append({
             'day_num': day_num,
             'day_title': day_title,
-            'locations': locations if locations else [{'time_period': 'All Day', 'location': day_title, 'description': 'Explore the day'}]
+            'locations': locations
         })
-    
+
     return days_data
 
 def fetch_pexels_image(query, filename, page=1):
-    """Fetch image from Pexels API"""
+    """Fetch image from Pexels API and save locally"""
     try:
         if not PEXELS_AVAILABLE:
             return None
-        
+
         pexels_key = st.secrets.get("PEXELS_API_KEY")
         if not pexels_key:
             return None
-        
+
         headers = {"Authorization": pexels_key}
-        params = {"query": query, "per_page": 5, "page": page}
-        
-        response = requests.get("https://api.pexels.com/v1/search", headers=headers, params=params)
-        
+        params = {
+            "query": query,
+            "per_page": 5,
+            "page": page,
+            "orientation": "landscape"
+        }
+
+        response = requests.get(
+            "https://api.pexels.com/v1/search",
+            headers=headers,
+            params=params,
+            timeout=20
+        )
+
         if response.status_code != 200:
             return None
-        
+
         data = response.json()
-        
-        if not data.get("photos"):
+        photos = data.get("photos", [])
+        if not photos:
             return None
-        
-        photo = random.choice(data["photos"][:3])
-        image_url = photo["src"]["landscape"]
-        img_data = requests.get(image_url).content
-        
+
+        photo = random.choice(photos[:min(3, len(photos))])
+        image_url = photo["src"].get("large") or photo["src"].get("landscape")
+
+        if not image_url:
+            return None
+
+        img_response = requests.get(image_url, timeout=20)
+        if img_response.status_code != 200:
+            return None
+
         with open(filename, "wb") as f:
-            f.write(img_data)
-        
+            f.write(img_response.content)
+
         return filename
-        
-    except Exception as e:
+
+    except Exception:
         return None
 
 # FEATURE 5: PEXELS IMAGE INTEGRATION
@@ -1137,149 +1175,154 @@ def get_city_image_pexels(city, width=800, height=500):
         return get_city_image(city)
 
 def generate_itinerary_video(itinerary_text, city, country, user_input):
-    """Generate travel video using Pexels images"""
-    
+    """Generate travel video using itinerary + Pexels images"""
     if not PEXELS_AVAILABLE:
         st.error("Pexels API not configured.")
         return None
-    
+
+    temp_dir = None
+
     try:
         days_data = parse_itinerary_into_days(itinerary_text)
-        
+
         if not days_data:
-            st.error("Could not parse itinerary.")
+            st.error("Could not parse itinerary into day-wise sections.")
             return None
-        
+
         temp_dir = tempfile.mkdtemp()
-        st.info(f"📹 Generating video with {len(days_data)} days...")
-        
+        st.info(f"Generating video with {len(days_data)} day(s)...")
+
         day_clips = []
         progress_bar = st.progress(0)
-        
+
         for day_idx, day_data in enumerate(days_data):
-            st.write(f"Processing **Day {day_data['day_num']}: {day_data['day_title']}**")
-            
-            locations = day_data['locations']
-            duration_per_location = 2
+            locations = day_data.get("locations", [])
             image_clips = []
-            
+
             for loc_idx, location in enumerate(locations):
-                st.write(f"    🖼️ Fetching image for {location['location']}...")
-                
-                search_query = f"{location['location']} {city}"
-                image_file = os.path.join(temp_dir, f"day_{day_data['day_num']}_loc_{loc_idx}.jpg")
-                
+                search_query = f"{location['location']} {city} travel"
+                image_file = os.path.join(
+                    temp_dir,
+                    f"day_{day_data['day_num']}_loc_{loc_idx}.jpg"
+                )
+
                 success = False
                 for page in range(1, 3):
                     if fetch_pexels_image(search_query, image_file, page=page):
                         success = True
                         break
-                
+
                 if not success:
-                    st.warning(f"Could not fetch image, using placeholder")
-                    placeholder = PILImage.new('RGB', (1280, 720), color=(70, 130, 180))
+                    placeholder = PILImage.new("RGB", (1280, 720), color=(70, 130, 180))
                     placeholder.save(image_file)
-                
+
                 try:
-                    img = PILImage.open(image_file)
+                    img = PILImage.open(image_file).convert("RGB")
                     img = img.resize((1280, 720))
                     frame = np.array(img)
-                    
-                    clip = ImageClip(frame).with_duration(duration_per_location)
-                    
-                    caption_text = location.get('caption', f"{location['time_period']}: {location['location']}")
-                    
-                    caption = TextClip(
-                        text=caption_text,
-                        font_size=24,
-                        color="white",
-                        size=(1000, None),
-                        method="caption",
-                        font="Arial"
-                    ).with_duration(duration_per_location).with_position(("center", 600))
-                    
-                    clip = CompositeVideoClip([clip, caption])
-                    image_clips.append(clip)
-                    
-                except Exception as e:
+
+                    base_clip = ImageClip(frame).set_duration(2)
+
+                    caption_text = location.get(
+                        "caption",
+                        f"{location.get('time_period', 'Stop')}: {location.get('location', city)}"
+                    )
+
+                    try:
+                        caption = TextClip(
+                            caption_text,
+                            fontsize=24,
+                            color="white",
+                            method="caption",
+                            size=(1000, None)
+                        ).set_duration(2).set_position(("center", 620))
+
+                        composed = CompositeVideoClip([base_clip, caption], size=(1280, 720))
+                    except Exception:
+                        composed = base_clip
+
+                    image_clips.append(composed)
+
+                except Exception as clip_error:
+                    st.warning(f"Skipping one image clip: {clip_error}")
                     continue
-            
+
             if not image_clips:
-                st.warning(f"No images for Day {day_data['day_num']}")
+                st.warning(f"No usable clips created for Day {day_data['day_num']}")
                 continue
-            
-            video = concatenate_videoclips(image_clips)
-            
-            day_header = TextClip(
-                text=f"Day {day_data['day_num']} - {day_data['day_title']}",
-                font_size=44,
-                color="yellow",
-                size=(1200, None),
-                method="caption",
-                font="Arial"
-            ).with_duration(2).with_position(("center", "center"))
-            
-            day_header_video = CompositeVideoClip([
-                ColorClip(size=(1280, 720), color=(0, 0, 0)).with_duration(2),
-                day_header
-            ])
-            
-            video = concatenate_videoclips([day_header_video, video])
-            day_clips.append(video)
-            
+
+            day_body = concatenate_videoclips(image_clips, method="compose")
+
+            try:
+                day_header_text = TextClip(
+                    f"Day {day_data['day_num']} - {day_data['day_title']}",
+                    fontsize=42,
+                    color="yellow",
+                    method="caption",
+                    size=(1100, None)
+                ).set_duration(2).set_position(("center", "center"))
+
+                day_header_bg = ColorClip(size=(1280, 720), color=(0, 0, 0)).set_duration(2)
+                day_header_video = CompositeVideoClip([day_header_bg, day_header_text], size=(1280, 720))
+            except Exception:
+                day_header_video = ColorClip(size=(1280, 720), color=(0, 0, 0)).set_duration(1)
+
+            full_day_clip = concatenate_videoclips([day_header_video, day_body], method="compose")
+            day_clips.append(full_day_clip)
+
             progress_bar.progress((day_idx + 1) / len(days_data))
-        
+
         if not day_clips:
-            st.error("No valid day clips created.")
+            st.error("No valid day clips were created.")
             return None
-        
-        st.write("📀 Merging all days...")
-        final_video = concatenate_videoclips(day_clips)
-        
-        title_slide = TextClip(
-            text=f"Your {city}, {country} Adventure",
-            font_size=56,
-            color="white",
-            size=(1200, None),
-            method="caption",
-            font="Arial"
-        ).with_duration(3).with_position(("center", "center"))
-        
-        title_slide_video = CompositeVideoClip([
-            ColorClip(size=(1280, 720), color=(25, 25, 112)).with_duration(3),
-            title_slide
-        ])
-        
-        final_video = concatenate_videoclips([title_slide_video, final_video])
-        
-        st.write("💾 Rendering video...")
-        output_buffer = BytesIO()
+
+        final_video = concatenate_videoclips(day_clips, method="compose")
+
+        try:
+            title_text = TextClip(
+                f"Your {city}, {country} Adventure",
+                fontsize=50,
+                color="white",
+                method="caption",
+                size=(1100, None)
+            ).set_duration(3).set_position(("center", "center"))
+
+            title_bg = ColorClip(size=(1280, 720), color=(25, 25, 112)).set_duration(3)
+            title_slide = CompositeVideoClip([title_bg, title_text], size=(1280, 720))
+        except Exception:
+            title_slide = ColorClip(size=(1280, 720), color=(25, 25, 112)).set_duration(2)
+
+        final_video = concatenate_videoclips([title_slide, final_video], method="compose")
+
         output_path = os.path.join(temp_dir, "output.mp4")
-        
         final_video.write_videofile(
             output_path,
             fps=24,
             codec="libx264",
-            audio=False
+            audio=False,
+            preset="medium",
+            threads=2
         )
-        
-        with open(output_path, 'rb') as f:
+
+        output_buffer = BytesIO()
+        with open(output_path, "rb") as f:
             output_buffer.write(f.read())
-        
         output_buffer.seek(0)
-        
-        try:
-            import shutil
-            shutil.rmtree(temp_dir)
-        except:
-            pass
-        
-        st.success("✅ Video generated!")
+
+        st.success("Video generated successfully!")
         return output_buffer
-        
+
     except Exception as e:
         st.error(f"Video generation error: {str(e)}")
         return None
+
+    finally:
+        if temp_dir and os.path.exists(temp_dir):
+            try:
+                import shutil
+                shutil.rmtree(temp_dir)
+            except Exception:
+                pass
 
 # =========================
 # FEEDBACK
@@ -2101,60 +2144,54 @@ def itinerary_page():
 def video_page():
     st.title("🎬 Travel Video Generator")
     st.markdown("---")
-    
+
     if st.session_state.current_itinerary is None:
         st.info("Generate an itinerary first in the **Itinerary** tab.")
         return
-    
+
     if not PEXELS_AVAILABLE:
         st.error("Pexels API not configured.")
         return
-    
-    st.success("✅ Ready to generate video!")
-    
+
     itinerary = st.session_state.current_itinerary
     city_row = st.session_state.current_city
-    user_input = st.session_state.current_user_input
-    
-    st.markdown(f"### 📍 {city_row['city']}, {city_row['country']}")
-    
-    st.markdown("""
-    **Video includes:**
-    - 🎬 Title slide
-    - 📸 Pexels images for each location
-    - 📝 Subtitles
-    - 🔤 Day-by-day breakdown
-    """)
-    
-    if st.button("🎬 Generate Video", type="primary", use_container_width=True, key="gen_video_btn"):
-        with st.spinner("Creating video... (may take several minutes)"):
+    user_input = st.session_state.current_user_input or st.session_state.cached_user_input
+
+    st.success("Ready to generate your travel video!")
+
+    st.markdown("### Video Preview Details")
+    st.write(f"**Destination:** {city_row['city']}, {city_row['country']}")
+    st.write(f"**Trip Style:** {user_input.get('interest', 'Travel')}")
+    st.write(f"**Duration:** {user_input.get('duration', city_row.get('ideal_duration_days', 'N/A'))} days")
+
+    if st.button("🎥 Generate Video", type="primary", use_container_width=True, key="generate_video_btn"):
+        with st.spinner("Creating your travel video..."):
             video_buffer = generate_itinerary_video(
-                itinerary,
-                city_row['city'],
-                city_row['country'],
-                user_input
+                itinerary_text=itinerary,
+                city=city_row['city'],
+                country=city_row['country'],
+                user_input=user_input
             )
-            
+
             if video_buffer:
                 st.session_state.video_buffer = video_buffer
                 st.session_state.video_generated = True
-                st.rerun()
-    
-    if st.session_state.video_generated and st.session_state.video_buffer:
+                st.success("✅ Video is ready!")
+            else:
+                st.session_state.video_generated = False
+                st.error("Failed to generate video.")
+
+    if st.session_state.get("video_generated") and st.session_state.get("video_buffer"):
         st.markdown("---")
-        st.markdown("### ✅ Video Ready!")
-        
-        st.video(st.session_state.video_buffer)
-        
+        st.markdown("### 📥 Download Your Video")
+
         st.download_button(
-            label="⬇️ Download Video",
+            label="⬇️ Download MP4 Video",
             data=st.session_state.video_buffer,
             file_name=f"{city_row['city']}_travel_video.mp4",
             mime="video/mp4",
             use_container_width=True
         )
-        
-        st.success("🎉 Ready to share!")
 
 def chatbot_page():
     st.title("💬 Multilingual Chatbot")
