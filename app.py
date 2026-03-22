@@ -1023,7 +1023,7 @@ WRITE EVERYTHING IN FULL DETAIL. INCLUDE ALL {duration} DAYS COMPLETELY."""
 # =========================
 
 def parse_itinerary_into_days(itinerary_text):
-    """Parse itinerary text into structured day data with synced caption text"""
+    """Parse itinerary text into day-wise video data with short summarized captions"""
     days_data = []
 
     day_pattern = r'\*\*Day\s+(\d+)\s*-\s*([^*]+)\*\*'
@@ -1037,6 +1037,59 @@ def parse_itinerary_into_days(itinerary_text):
         day_matches = alt_matches
 
     video_periods = ['Morning:', 'Lunch:', 'Afternoon:', 'Evening:']
+
+    def clean_text(text):
+        text = re.sub(r'\s+', ' ', text).strip()
+        text = text.replace('*', '').replace('#', '')
+        return text
+
+    def summarize_for_subtitle(period, content, day_num):
+        content = clean_text(content)
+
+        # take first sentence only
+        first_sentence = content.split('.')[0].strip() if '.' in content else content
+
+        # remove very long bracket-style or extra detail
+        first_sentence = re.sub(r'\([^)]*\)', '', first_sentence).strip()
+
+        # make it shorter and recap-like
+        if len(first_sentence) > 55:
+            words = first_sentence.split()
+            short_text = ""
+            for word in words:
+                test = f"{short_text} {word}".strip()
+                if len(test) <= 55:
+                    short_text = test
+                else:
+                    break
+            first_sentence = short_text
+
+        # fallback if too empty
+        if not first_sentence:
+            first_sentence = f"{period.replace(':', '')} activity"
+
+        # final subtitle with day + section
+        subtitle = f"Day {day_num} • {period.replace(':', '')} • {first_sentence}"
+
+        # hard cap to prevent cut-off
+        if len(subtitle) > 75:
+            subtitle = subtitle[:72].rstrip() + "..."
+
+        return subtitle
+
+    def extract_location_name(content, fallback):
+        content = clean_text(content)
+        first_sentence = content.split('.')[0].strip() if '.' in content else content
+        words = first_sentence.split()
+
+        if len(words) >= 4:
+            location_name = " ".join(words[:4])
+        elif first_sentence:
+            location_name = first_sentence[:40]
+        else:
+            location_name = fallback
+
+        return location_name.strip()
 
     for i, match in enumerate(day_matches):
         day_num = match.group(1)
@@ -1061,28 +1114,25 @@ def parse_itinerary_into_days(itinerary_text):
                 content = day_content[start_idx + len(period):next_period_idx].strip()
 
                 if content:
-                    first_sentence = content.split('.')[0].strip()
-                    words = first_sentence.split()
-
-                    if len(words) >= 4:
-                        location_name = " ".join(words[:4])
-                    else:
-                        location_name = first_sentence[:40] if first_sentence else day_title
-
-                    caption = f"Day {day_num} · {period.replace(':', '')} · {location_name}"
+                    location_name = extract_location_name(content, day_title)
+                    subtitle = summarize_for_subtitle(period, content, day_num)
 
                     locations.append({
                         "time_period": period.replace(':', ''),
                         "location": location_name,
-                        "caption": caption,
+                        "caption": subtitle,
                         "description": content
                     })
 
         if not locations:
+            fallback_caption = f"Day {day_num} • {day_title}"
+            if len(fallback_caption) > 75:
+                fallback_caption = fallback_caption[:72].rstrip() + "..."
+
             locations = [{
                 "time_period": "All Day",
                 "location": day_title,
-                "caption": f"Day {day_num} · {day_title}",
+                "caption": fallback_caption,
                 "description": day_content
             }]
 
