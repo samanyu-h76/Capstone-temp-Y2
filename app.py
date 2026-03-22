@@ -1054,13 +1054,14 @@ def fetch_pexels_image(query, filename, page=1):
 
 # FEATURE 5: PEXELS IMAGE INTEGRATION
 def get_city_image_pexels(city, width=800, height=500):
-    """Fetch image from Pexels API instead of Picsum"""
     try:
         if not PEXELS_AVAILABLE:
+            st.warning(f"[IMAGE DEBUG] Using Picsum for {city} (Pexels not available)")
             return get_city_image(city)
         
         pexels_key = st.secrets.get("PEXELS_API_KEY")
         if not pexels_key:
+            st.warning(f"[IMAGE DEBUG] Using Picsum for {city} (No API key)")
             return get_city_image(city)
         
         headers = {"Authorization": pexels_key}
@@ -1076,11 +1077,14 @@ def get_city_image_pexels(city, width=800, height=500):
             data = response.json()
             if data.get("photos"):
                 image_url = data["photos"][0]["src"]["landscape"]
+                st.success(f"[IMAGE DEBUG] Using Pexels for {city}")
                 return image_url
         
+        st.warning(f"[IMAGE DEBUG] Using Picsum for {city} (No photos found)")
         return get_city_image(city)
         
     except Exception as e:
+        st.error(f"[IMAGE DEBUG] Error → Picsum fallback: {str(e)}")
         return get_city_image(city)
 
 def generate_itinerary_video(itinerary_text, city, country, user_input):
