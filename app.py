@@ -322,27 +322,21 @@ initialize_pexels()
 # UNIFIED FEEDBACK SYSTEM (FIRESTORE ONLY)
 # =========================
 def save_feedback_to_firebase(module, feedback_type, target, value, metadata=None):
-    """
-    Unified feedback function for all modules.
-    
-    Args:
-        module: str - "recommendation", "itinerary", "video", "chatbot", "trip"
-        feedback_type: str - "like", "rating", "text", "image"
-        target: str - city/itinerary/video/chatbot message/destination being reviewed
-        value: any - actual feedback (True/False for like, 1-5 for rating, text string, etc)
-        metadata: dict - optional additional context (language, duration, etc)
-    """
     try:
         if not FIREBASE_AVAILABLE or not db:
-            # Fail silently but log
+            print("Firebase not available")
             return False
         
         user_id = st.session_state.get("user_id")
-        if not user_id:
-            # Don't save if user not logged in
+
+        # DEBUG LINE
+        print("DEBUG USER_ID:", user_id)
+
+        if not user_id or user_id == "":
+            st.error("❌ DEBUG: user_id missing. Feedback NOT saved.")
+            print("ERROR: user_id missing in session_state")
             return False
-        
-        # Build feedback document with unified schema
+
         feedback_doc = {
             "user_id": user_id,
             "session_id": st.session_state.get("session_id", "unknown"),
@@ -351,113 +345,90 @@ def save_feedback_to_firebase(module, feedback_type, target, value, metadata=Non
             "target": target,
             "value": value,
             "metadata": metadata or {},
-            "timestamp": firestore.transforms.SERVER_TIMESTAMP
+            "timestamp": firestore.SERVER_TIMESTAMP
         }
-        
-        # Save to unified feedback collection
+
         db.collection("feedback").add(feedback_doc)
+
         print(f"[FEEDBACK SAVED] {user_id} | {module} | {target}")
         return True
-        
+
     except Exception as e:
-        # Silently fail - don't disrupt user flow
         print(f"Feedback save error: {str(e)}")
         return False
 
-def save_feedback(target, feedback_value):
-    """
-    Convenience wrapper for recommendation/itinerary feedback.
-    Saves both to CSV and Firebase with unified schema.
-    
-    Args:
-        target: str - city or destination name
-        feedback_value: str - "up" or "down" for thumbs up/down
-    """
-    import csv
-    import os
-    from datetime import datetime
-    
+def save_feedback(city, feedback):
+    os.makedirs("feedback", exist_ok=True)
+    path = "feedback/feedback.csv"
+
+    user_id = st.session_state.get("user_id", "anonymous")
+
+    row = {
+        "user_id": user_id,
+        "session_id": st.session_state.get("session_id", "unknown"),
+        "city": city,
+        "feedback": feedback,
+        "timestamp": datetime.now().isoformat()
+    }
+
     try:
-        user_id = st.session_state.get('user_id', 'anonymous')
-        session_id = st.session_state.get('session_id', 'unknown')
-        
-        # Save to Firebase with unified schema
-        save_feedback_to_firebase(
-            module="recommendation",
-            feedback_type="like",
-            target=target,
-            value=feedback_value,
-            metadata={"user_action": "thumbs_button"}
-        )
-        
-        # Also save to local CSV for backup
-        csv_file = "user_feedback.csv"
-        file_exists = os.path.exists(csv_file)
-        
+        df = pd.read_csv(path)
+    except:
+        df = pd.DataFrame(columns=row.keys())
+
+    df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+    df.to_csv(path, index=False)
+
+    if FIREBASE_AVAILABLE and db is not None:
         try:
-            with open(csv_file, 'a', newline='', encoding='utf-8') as f:
-                writer = csv.writer(f)
-                
-                # Write header if file is new
-                if not file_exists:
-                    writer.writerow(['timestamp', 'user_id', 'session_id', 'module', 'type', 'target', 'value'])
-                
-                writer.writerow([
-                    datetime.now().isoformat(),
-                    user_id,
-                    session_id,
-                    'recommendation',
-                    'like',
-                    target,
-                    feedback_value
-                ])
-        except Exception as csv_error:
-            print(f"CSV backup error: {str(csv_error)}")
-        
-        return True
-    except Exception as e:
-        print(f"Feedback save error: {str(e)}")
-        return False
+            db.collection("user_feedback").add({
+                "user_id": user_id,
+                "session_id": st.session_state.get("session_id", "unknown"),
+                "city": city,
+                "feedback": feedback,
+                "timestamp": firestore.SERVER_TIMESTAMP
+            })
+        except Exception as e:
+            print(f"Firebase feedback error: {str(e)}")
 
 # =========================
 # CHATBOT CSV LOGGING
 # =========================
 def log_chatbot_interaction_to_csv(query, response, rating=None):
-    """
-    Log chatbot interactions to CSV for learning model improvement.
-    Logs: timestamp, user_id, session_id, query, response, rating (if provided)
-    """
     import csv
     import os
     
     csv_file = "chatbot_interactions.csv"
     file_exists = os.path.exists(csv_file)
-    
+
+    user_id = st.session_state.get('user_id', 'anonymous')
+
     try:
-        user_id = st.session_state.get('user_id', 'anonymous')
-        session_id = st.session_state.get('session_id', 'unknown')
-        
         with open(csv_file, 'a', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
-            
-            # Write header if file is new
+
             if not file_exists:
-                writer.writerow(['timestamp', 'user_id', 'session_id', 'query', 'response', 'rating'])
-            
-            # Safely truncate long text
-            query_truncated = (query[:500] if query else '')
-            response_truncated = (response[:500] if response else '')
-            
+                writer.writerow([
+                    'timestamp',
+                    'user_id',
+                    'session_id',
+                    'query',
+                    'response',
+                    'rating'
+                ])
+
             writer.writerow([
                 datetime.now().isoformat(),
                 user_id,
-                session_id,
-                query_truncated,
-                response_truncated,
+                st.session_state.get('session_id', 'unknown'),
+                query[:200] if query else '',
+                response[:500] if response else '',
                 rating
             ])
+
         print(f"[CHATBOT LOG] {user_id} | {rating}")
         return True
+
     except Exception as e:
         print(f"CSV logging error: {str(e)}")
         return False
