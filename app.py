@@ -2305,6 +2305,39 @@ def itinerary_page():
                     mime="application/pdf",
                     use_container_width=True
                 )
+        
+        # =========================
+        # ITINERARY FEEDBACK SECTION
+        # =========================
+        st.markdown("---")
+        st.markdown("### Rate This Itinerary")
+        
+        itinerary_rating = st.slider(
+            "How would you rate this itinerary?",
+            min_value=1,
+            max_value=5,
+            value=4,
+            key="itinerary_rating_slider"
+        )
+        
+        itinerary_feedback_text = st.text_input(
+            "Additional comments (optional):",
+            placeholder="What did you like or what could be improved?",
+            key="itinerary_feedback_text"
+        )
+        
+        if st.button("Submit Itinerary Feedback", type="secondary", use_container_width=True, key="submit_itinerary_feedback_btn"):
+            success = save_feedback_to_firebase(
+                module="itinerary",
+                feedback_type="rating",
+                target=selected_city,
+                value=itinerary_rating,
+                metadata={"text": itinerary_feedback_text}
+            )
+            if success:
+                st.success("Thank you for your feedback!")
+            else:
+                st.warning("Could not save feedback. Please ensure you are logged in.")
 
 def video_page():
     st.title("🎬 Travel Video Generator")
@@ -2357,6 +2390,39 @@ def video_page():
             mime="video/mp4",
             use_container_width=True
         )
+        
+        # =========================
+        # VIDEO FEEDBACK SECTION
+        # =========================
+        st.markdown("---")
+        st.markdown("### Rate This Video")
+        
+        video_rating = st.slider(
+            "How would you rate this video?",
+            min_value=1,
+            max_value=5,
+            value=4,
+            key="video_rating_slider"
+        )
+        
+        video_feedback_text = st.text_input(
+            "Additional comments (optional):",
+            placeholder="What did you like or what could be improved?",
+            key="video_feedback_text"
+        )
+        
+        if st.button("Submit Video Feedback", type="secondary", use_container_width=True, key="submit_video_feedback_btn"):
+            success = save_feedback_to_firebase(
+                module="video",
+                feedback_type="rating",
+                target=city_row['city'],
+                value=video_rating,
+                metadata={"text": video_feedback_text}
+            )
+            if success:
+                st.success("Thank you for your feedback!")
+            else:
+                st.warning("Could not save feedback. Please ensure you are logged in.")
 
 def chatbot_page():
     st.title("💬 Multilingual Chatbot")
@@ -2378,20 +2444,66 @@ def chatbot_page():
         index=0
     )
     
+    # Clear chat button
+    col1, col2 = st.columns([3, 1])
+    with col2:
+        if st.button("Clear Chat", use_container_width=True, key="clear_chat_btn"):
+            st.session_state.chat_history = []
+            st.rerun()
+    
     st.markdown("### Chat")
     
     chat_container = st.container(height=400, border=True)
     
     with chat_container:
-        st.markdown("**Bot:** Hello! How can I help you plan your perfect trip?")
+        # Show welcome message if no history
+        if len(st.session_state.chat_history) == 0:
+            st.markdown("**Bot:** Hello! How can I help you plan your perfect trip?")
+        else:
+            # Display chat history with feedback buttons for assistant messages
+            for idx, message in enumerate(st.session_state.chat_history):
+                if message["role"] == "user":
+                    st.markdown(f"**You:** {message['content']}")
+                else:
+                    st.markdown(f"**Bot:** {message['content']}")
+                    
+                    # Add thumbs up/down feedback for each assistant message
+                    feedback_key = f"feedback_{idx}"
+                    col_up, col_down, col_space = st.columns([1, 1, 8])
+                    
+                    with col_up:
+                        if st.button("👍", key=f"thumbs_up_{idx}", help="Helpful response"):
+                            save_feedback_to_firebase(
+                                module="chatbot",
+                                feedback_type="like",
+                                target=message['content'][:200],  # First 200 chars as target
+                                value="up"
+                            )
+                            st.toast("Thanks for the feedback!")
+                    
+                    with col_down:
+                        if st.button("👎", key=f"thumbs_down_{idx}", help="Not helpful"):
+                            save_feedback_to_firebase(
+                                module="chatbot",
+                                feedback_type="like",
+                                target=message['content'][:200],
+                                value="down"
+                            )
+                            st.toast("Thanks for the feedback!")
     
-    user_input = st.text_input("Your message:", placeholder="Ask me anything!")
+    user_input = st.text_input("Your message:", placeholder="Ask me anything!", key="chatbot_user_input")
     
-    if st.button("Send", use_container_width=True):
+    if st.button("Send", use_container_width=True, key="chatbot_send_btn"):
         if user_input:
             if not GEMINI_AVAILABLE:
                 st.error("Gemini API unavailable.")
             else:
+                # Add user message to history
+                st.session_state.chat_history.append({
+                    "role": "user",
+                    "content": user_input
+                })
+                
                 with st.spinner("Thinking..."):
                     try:
                         model = genai.GenerativeModel("gemini-2.5-flash")
@@ -2410,8 +2522,12 @@ Provide a helpful, concise answer about travel."""
                         )
                         
                         if response and response.text:
-                            st.success("✅ Response:")
-                            st.info(f"**Bot:** {response.text.strip()}")
+                            # Add assistant response to history
+                            st.session_state.chat_history.append({
+                                "role": "assistant",
+                                "content": response.text.strip()
+                            })
+                            st.rerun()
                         else:
                             st.error("No response from bot")
                     except Exception as e:
