@@ -1023,21 +1023,20 @@ WRITE EVERYTHING IN FULL DETAIL. INCLUDE ALL {duration} DAYS COMPLETELY."""
 # =========================
 
 def parse_itinerary_into_days(itinerary_text):
-    """Parse itinerary text into structured day data"""
+    """Parse itinerary text into structured day data with synced caption text"""
     days_data = []
 
     day_pattern = r'\*\*Day\s+(\d+)\s*-\s*([^*]+)\*\*'
     day_matches = list(re.finditer(day_pattern, itinerary_text))
 
     if not day_matches:
-        # fallback parser if markdown **Day X** wasn't followed exactly
         alt_pattern = r'Day\s+(\d+)\s*-\s*(.+)'
         alt_matches = list(re.finditer(alt_pattern, itinerary_text))
         if not alt_matches:
             return []
         day_matches = alt_matches
 
-    time_periods = ['Morning:', 'Lunch:', 'Afternoon:', 'Evening:', 'Tips:', 'Budget Tip:', 'Local Insight:']
+    video_periods = ['Morning:', 'Lunch:', 'Afternoon:', 'Evening:']
 
     for i, match in enumerate(day_matches):
         day_num = match.group(1)
@@ -1049,12 +1048,12 @@ def parse_itinerary_into_days(itinerary_text):
 
         locations = []
 
-        for idx, period in enumerate(time_periods):
+        for period in video_periods:
             if period in day_content:
                 start_idx = day_content.find(period)
                 next_period_idx = len(day_content)
 
-                for next_period in time_periods:
+                for next_period in video_periods + ['Budget Tip:', 'Local Insight:', 'Tips:']:
                     found_idx = day_content.find(next_period, start_idx + len(period))
                     if found_idx != -1 and found_idx < next_period_idx:
                         next_period_idx = found_idx
@@ -1065,30 +1064,32 @@ def parse_itinerary_into_days(itinerary_text):
                     first_sentence = content.split('.')[0].strip()
                     words = first_sentence.split()
 
-                    # slightly smarter fallback location extraction
-                    location = " ".join(words[:4]) if len(words) >= 4 else first_sentence[:40]
-                    if not location:
-                        location = day_title
+                    if len(words) >= 4:
+                        location_name = " ".join(words[:4])
+                    else:
+                        location_name = first_sentence[:40] if first_sentence else day_title
+
+                    caption = f"Day {day_num} · {period.replace(':', '')} · {location_name}"
 
                     locations.append({
-                        'time_period': period.replace(':', ''),
-                        'location': location,
-                        'caption': f"{period.replace(':', '')}: {location}",
-                        'description': content[:140]
+                        "time_period": period.replace(':', ''),
+                        "location": location_name,
+                        "caption": caption,
+                        "description": content
                     })
 
         if not locations:
             locations = [{
-                'time_period': 'All Day',
-                'location': day_title,
-                'caption': f"Day {day_num}: {day_title}",
-                'description': day_content[:140] if day_content else 'Explore the city'
+                "time_period": "All Day",
+                "location": day_title,
+                "caption": f"Day {day_num} · {day_title}",
+                "description": day_content
             }]
 
         days_data.append({
-            'day_num': day_num,
-            'day_title': day_title,
-            'locations': locations
+            "day_num": day_num,
+            "day_title": day_title,
+            "locations": locations
         })
 
     return days_data
