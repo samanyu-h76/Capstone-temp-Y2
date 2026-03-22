@@ -749,7 +749,7 @@ def generate_destination_description(city, country):
             prompt,
             generation_config=genai.types.GenerationConfig(
                 temperature=0.7,
-                max_output_tokens=500,
+                max_output_tokens=2048,
             )
         )
         
@@ -863,7 +863,7 @@ Keep it informative and practical."""
             prompt,
             generation_config=genai.types.GenerationConfig(
                 temperature=0.7,
-                max_output_tokens=600,
+                max_output_tokens=2048,
             )
         )
         
@@ -893,7 +893,7 @@ Text to translate:
             prompt,
             generation_config=genai.types.GenerationConfig(
                 temperature=0.3,
-                max_output_tokens=500,
+                max_output_tokens=2048,
             )
         )
         
