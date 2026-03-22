@@ -312,6 +312,50 @@ def initialize_pexels():
 
 initialize_pexels()
 
+# =========================
+# UNIFIED FEEDBACK SYSTEM (FIRESTORE ONLY)
+# =========================
+def save_feedback_to_firebase(module, feedback_type, target, value, metadata=None):
+    """
+    Unified feedback function for all modules.
+    
+    Args:
+        module: str - "recommendation", "itinerary", "video", "chatbot", "trip"
+        feedback_type: str - "like", "rating", "text", "image"
+        target: str - city/itinerary/video/chatbot message/destination being reviewed
+        value: any - actual feedback (True/False for like, 1-5 for rating, text string, etc)
+        metadata: dict - optional additional context (language, duration, etc)
+    """
+    try:
+        if not FIREBASE_AVAILABLE or not db:
+            st.warning("Cannot save feedback: Firebase not available")
+            return False
+        
+        user_id = st.session_state.get("user_id")
+        if not user_id:
+            st.info("Sign in to save feedback")
+            return False
+        
+        # Build feedback document
+        feedback_doc = {
+            "user_id": user_id,
+            "session_id": st.session_state.get("session_id", "unknown"),
+            "module": module,
+            "type": feedback_type,
+            "target": target,
+            "value": value,
+            "metadata": metadata or {},
+            "timestamp": firestore.transforms.SERVER_TIMESTAMP
+        }
+        
+        # Save to unified feedback collection
+        db.collection("feedback").add(feedback_doc)
+        return True
+        
+    except Exception as e:
+        st.debug(f"Feedback save error: {str(e)}")
+        return False
+
 # NOTE: V2 dataset already loaded at line 205 via load_datasets()
 # DO NOT load old dataset - it would override the v2 data
 # The load_datasets() function at line 185 is the active data loader
@@ -2475,23 +2519,33 @@ Based on the user's profile and travel history above, provide a detailed, person
             submitted = st.form_submit_button("Submit Feedback", use_container_width=True)
             
             if submitted and feedback_text.strip() and destination.strip():
-                # Save feedback to Firebase
-                try:
-                    if FIREBASE_AVAILABLE and db and st.session_state.get("user_id"):
-                        feedback_data = {
-                            "timestamp": datetime.now(),
-                            "destination": destination,
-                            "feedback": feedback_text,
-                            "rating": rating,
-                            "images_count": len(uploaded_files) if uploaded_files else 0,
-                            "language": st.session_state.chat_language
-                        }
-                        db.collection("feedback").document(st.session_state.user_id).collection("trips").add(feedback_data)
-                        st.success("Thank you! Your feedback has been saved.")
-                    else:
-                        st.success("Feedback received (local only)")
-                except Exception as e:
-                    st.warning("Feedback saved locally")
+                # Save trip feedback using unified function
+                metadata = {
+                    "language": st.session_state.chat_language,
+                    "images_count": len(uploaded_files) if uploaded_files else 0,
+                    "trip_duration": st.session_state.get("current_user_input", {}).get("duration", "N/A")
+                }
+                
+                success = save_feedback_to_firebase(
+                    module="trip",
+                    feedback_type="text",
+                    target=destination,
+                    value=feedback_text,
+                    metadata=metadata
+                )
+                
+                # Also save the rating separately
+                if success:
+                    save_feedback_to_firebase(
+                        module="trip",
+                        feedback_type="rating",
+                        target=destination,
+                        value=rating,
+                        metadata={"rating_description": f"{rating}/5 stars"}
+                    )
+                    st.success("Thank you! Your feedback has been saved.")
+                else:
+                    st.warning("Could not save feedback. Please check your connection.")
             elif submitted:
                 st.warning("Please fill in destination and feedback")
 
