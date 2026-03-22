@@ -1174,7 +1174,7 @@ def get_city_image_pexels(city, width=800, height=500):
         return get_city_image(city)
 
 def generate_itinerary_video(itinerary_text, city, country, user_input):
-    """Generate travel video using itinerary + Pexels images for ALL itinerary days"""
+    """Generate travel recap video with synced subtitles for every image clip"""
     if not PEXELS_AVAILABLE:
         st.error("Pexels API not configured.")
         return None
@@ -1198,7 +1198,8 @@ def generate_itinerary_video(itinerary_text, city, country, user_input):
 
         video_width = 960
         video_height = 540
-        clip_duration = 1.2
+        subtitle_bar_height = 90
+        clip_duration = 1.8
 
         for day_idx, day_data in enumerate(days_data):
             status_text.write(f"Processing Day {day_data['day_num']} of {len(days_data)}...")
@@ -1209,7 +1210,8 @@ def generate_itinerary_video(itinerary_text, city, country, user_input):
             if not locations:
                 locations = [{
                     "location": f"{city} travel",
-                    "time_period": "All Day"
+                    "time_period": "All Day",
+                    "caption": f"Day {day_data['day_num']} - {day_data['day_title']}"
                 }]
 
             for loc_idx, location in enumerate(locations):
@@ -1230,7 +1232,43 @@ def generate_itinerary_video(itinerary_text, city, country, user_input):
                     img = img.resize((video_width, video_height))
                     frame = np.array(img)
 
-                    clip = ImageClip(frame).with_duration(clip_duration)
+                    base_clip = ImageClip(frame).with_duration(clip_duration)
+
+                    subtitle_text = location.get("caption", "").strip()
+                    if not subtitle_text:
+                        subtitle_text = f"{location.get('time_period', 'Stop')}: {location.get('location', city)}"
+
+                    # Keep subtitle concise enough to render cleanly
+                    if len(subtitle_text) > 80:
+                        subtitle_text = subtitle_text[:77] + "..."
+
+                    try:
+                        subtitle_bg = (
+                            ColorClip(size=(video_width, subtitle_bar_height), color=(0, 0, 0))
+                            .with_duration(clip_duration)
+                            .with_opacity(0.65)
+                            .with_position((0, video_height - subtitle_bar_height))
+                        )
+
+                        subtitle = (
+                            TextClip(
+                                text=subtitle_text,
+                                font_size=28,
+                                color="white",
+                                method="caption",
+                                size=(video_width - 60, subtitle_bar_height - 20)
+                            )
+                            .with_duration(clip_duration)
+                            .with_position(("center", video_height - subtitle_bar_height + 12))
+                        )
+
+                        clip = CompositeVideoClip(
+                            [base_clip, subtitle_bg, subtitle],
+                            size=(video_width, video_height)
+                        )
+                    except Exception:
+                        clip = base_clip
+
                     image_clips.append(clip)
 
                 except Exception as clip_error:
@@ -1243,11 +1281,36 @@ def generate_itinerary_video(itinerary_text, city, country, user_input):
 
             try:
                 day_video = concatenate_videoclips(image_clips, method="compose")
-                day_clips.append(day_video)
             except Exception as day_error:
                 st.warning(f"Could not build Day {day_data['day_num']}: {day_error}")
                 continue
 
+            # Day intro card
+            try:
+                day_intro_bg = ColorClip(size=(video_width, video_height), color=(20, 20, 20)).with_duration(1.5)
+
+                day_intro_text = (
+                    TextClip(
+                        text=f"Day {day_data['day_num']} - {day_data['day_title']}",
+                        font_size=36,
+                        color="white",
+                        method="caption",
+                        size=(video_width - 80, None)
+                    )
+                    .with_duration(1.5)
+                    .with_position(("center", "center"))
+                )
+
+                day_intro = CompositeVideoClip(
+                    [day_intro_bg, day_intro_text],
+                    size=(video_width, video_height)
+                )
+
+                full_day_video = concatenate_videoclips([day_intro, day_video], method="compose")
+            except Exception:
+                full_day_video = day_video
+
+            day_clips.append(full_day_video)
             progress_bar.progress((day_idx + 1) / len(days_data))
 
         if not day_clips:
@@ -1256,6 +1319,27 @@ def generate_itinerary_video(itinerary_text, city, country, user_input):
 
         status_text.write("Merging all day clips...")
         final_video = concatenate_videoclips(day_clips, method="compose")
+
+        # Main title intro
+        try:
+            title_bg = ColorClip(size=(video_width, video_height), color=(25, 25, 112)).with_duration(2)
+
+            title_text = (
+                TextClip(
+                    text=f"{city}, {country}\nTravel Recap",
+                    font_size=40,
+                    color="white",
+                    method="caption",
+                    size=(video_width - 100, None)
+                )
+                .with_duration(2)
+                .with_position(("center", "center"))
+            )
+
+            title_clip = CompositeVideoClip([title_bg, title_text], size=(video_width, video_height))
+            final_video = concatenate_videoclips([title_clip, final_video], method="compose")
+        except Exception:
+            pass
 
         output_path = os.path.join(temp_dir, "output.mp4")
         status_text.write("Rendering MP4 file...")
