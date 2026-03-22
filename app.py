@@ -359,8 +359,101 @@ def save_feedback_to_firebase(module, feedback_type, target, value, metadata=Non
         return True
         
     except Exception as e:
-        st.debug(f"Feedback save error: {str(e)}")
+        # Silently fail - don't disrupt user flow
+        print(f"Feedback save error: {str(e)}")
         return False
+
+# =========================
+# CHATBOT CSV LOGGING
+# =========================
+def log_chatbot_interaction_to_csv(query, response, rating=None):
+    """
+    Log chatbot interactions to CSV for learning model improvement.
+    Logs: timestamp, user_id, query, response, rating (if provided)
+    """
+    import csv
+    import os
+    
+    csv_file = "chatbot_interactions.csv"
+    file_exists = os.path.exists(csv_file)
+    
+    try:
+        with open(csv_file, 'a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            
+            # Write header if file is new
+            if not file_exists:
+                writer.writerow(['timestamp', 'user_id', 'session_id', 'query', 'response', 'rating'])
+            
+            writer.writerow([
+                datetime.now().isoformat(),
+                st.session_state.get('user_id', 'anonymous'),
+                st.session_state.get('session_id', 'unknown'),
+                query,
+                response[:500] if response else '',  # Truncate long responses
+                rating
+            ])
+        return True
+    except Exception as e:
+        print(f"CSV logging error: {str(e)}")
+        return False
+
+# =========================
+# ADAPTIVE FEEDBACK ADJUSTMENT
+# =========================
+def get_user_destination_feedback_adjustment(city, user_id=None):
+    """
+    Get feedback adjustment for a destination based on user's previous feedback.
+    Returns a score modifier (-0.15 to +0.15) based on feedback trends.
+    
+    - Negative feedback (low ratings, thumbs down) = reduce score
+    - Positive feedback (high ratings, thumbs up) = boost score
+    """
+    if not FIREBASE_AVAILABLE or not db:
+        return 0.0
+    
+    try:
+        user_id = user_id or st.session_state.get('user_id')
+        if not user_id:
+            return 0.0
+        
+        # Query user's feedback for this destination
+        feedback_ref = db.collection("feedback").where("user_id", "==", user_id).where("target", "==", city)
+        feedback_docs = feedback_ref.stream()
+        
+        total_adjustment = 0.0
+        feedback_count = 0
+        
+        for doc in feedback_docs:
+            data = doc.to_dict()
+            feedback_type = data.get('type', '')
+            value = data.get('value')
+            
+            if feedback_type == 'rating' and value:
+                # Rating 1-5: convert to adjustment (-0.1 to +0.1)
+                rating = float(value)
+                adjustment = (rating - 3) * 0.05  # 1=-0.1, 3=0, 5=+0.1
+                total_adjustment += adjustment
+                feedback_count += 1
+                
+            elif feedback_type == 'like':
+                # Thumbs up/down: +0.05 or -0.05
+                if value == 'up':
+                    total_adjustment += 0.05
+                elif value == 'down':
+                    total_adjustment -= 0.05
+                feedback_count += 1
+        
+        if feedback_count == 0:
+            return 0.0
+        
+        # Average adjustment, capped at +/- 0.15
+        avg_adjustment = total_adjustment / feedback_count
+        return max(-0.15, min(0.15, avg_adjustment))
+        
+    except Exception as e:
+        print(f"Feedback adjustment error: {str(e)}")
+        return 0.0
 
 # NOTE: V2 dataset already loaded at line 205 via load_datasets()
 # DO NOT load old dataset - it would override the v2 data
@@ -679,7 +772,18 @@ def compute_similarity(master_df, user, patterns):
         weights["budget"] * df["budget_sim"] +
         weights["climate"] * df["climate_sim"]
     )
-
+    
+    # ADAPTIVE IMPROVEMENT: Apply user feedback adjustment to scores
+    # This modifies scores based on the user's previous feedback for each destination
+    user_id = st.session_state.get('user_id')
+    if user_id:
+        df["feedback_adjustment"] = df["city"].apply(
+            lambda city: get_user_destination_feedback_adjustment(city, user_id)
+        )
+        df["final_score"] = df["final_score"] + df["feedback_adjustment"]
+        # Clamp scores to valid range
+        df["final_score"] = df["final_score"].clip(lower=0, upper=1)
+    
     return df.sort_values("final_score", ascending=False)
 
 # =========================
@@ -2479,6 +2583,12 @@ def chatbot_page():
                                 target=message['content'][:200],  # First 200 chars as target
                                 value="up"
                             )
+                            # Find the preceding user query for this response
+                            user_query = ""
+                            if idx > 0 and st.session_state.chat_history[idx-1]["role"] == "user":
+                                user_query = st.session_state.chat_history[idx-1]["content"]
+                            # Log rating to CSV
+                            log_chatbot_interaction_to_csv(user_query, message['content'], rating="up")
                             st.toast("Thanks for the feedback!")
                     
                     with col_down:
@@ -2489,6 +2599,12 @@ def chatbot_page():
                                 target=message['content'][:200],
                                 value="down"
                             )
+                            # Find the preceding user query for this response
+                            user_query = ""
+                            if idx > 0 and st.session_state.chat_history[idx-1]["role"] == "user":
+                                user_query = st.session_state.chat_history[idx-1]["content"]
+                            # Log rating to CSV
+                            log_chatbot_interaction_to_csv(user_query, message['content'], rating="down")
                             st.toast("Thanks for the feedback!")
     
     user_input = st.text_input("Your message:", placeholder="Ask me anything!", key="chatbot_user_input")
@@ -2522,11 +2638,17 @@ Provide a helpful, concise answer about travel."""
                         )
                         
                         if response and response.text:
+                            response_text = response.text.strip()
+                            
                             # Add assistant response to history
                             st.session_state.chat_history.append({
                                 "role": "assistant",
-                                "content": response.text.strip()
+                                "content": response_text
                             })
+                            
+                            # Log interaction to CSV for learning model improvement
+                            log_chatbot_interaction_to_csv(user_input, response_text)
+                            
                             st.rerun()
                         else:
                             st.error("No response from bot")
