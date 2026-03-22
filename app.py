@@ -124,6 +124,16 @@ def initialize_session_state():
     
     if 'video_generated' not in st.session_state:
         st.session_state.video_generated = False
+    
+    # Chatbot variables
+    if 'chat_history' not in st.session_state:
+        st.session_state.chat_history = []
+    
+    if 'chat_language' not in st.session_state:
+        st.session_state.chat_language = 'English'
+    
+    if 'uploaded_images' not in st.session_state:
+        st.session_state.uploaded_images = []
 
 # Initialize session state on every page load
 initialize_session_state()
@@ -1056,17 +1066,16 @@ def fetch_pexels_image(query, filename, page=1):
 def get_city_image_pexels(city, width=800, height=500):
     try:
         if not PEXELS_AVAILABLE:
-            st.warning(f"[IMAGE DEBUG] Using Picsum for {city} (Pexels not available)")
             return get_city_image(city)
         
         pexels_key = st.secrets.get("PEXELS_API_KEY")
         if not pexels_key:
-            st.warning(f"[IMAGE DEBUG] Using Picsum for {city} (No API key)")
             return get_city_image(city)
         
         headers = {"Authorization": pexels_key}
+        # Improved search query for better travel destination images
         params = {
-            "query": f"{city} travel destination",
+            "query": f"{city} beautiful cityscape landmarks attractions tourism",
             "per_page": 1,
             "orientation": "landscape"
         }
@@ -1077,14 +1086,11 @@ def get_city_image_pexels(city, width=800, height=500):
             data = response.json()
             if data.get("photos"):
                 image_url = data["photos"][0]["src"]["landscape"]
-                st.success(f"[IMAGE DEBUG] Using Pexels for {city}")
                 return image_url
         
-        st.warning(f"[IMAGE DEBUG] Using Picsum for {city} (No photos found)")
         return get_city_image(city)
         
     except Exception as e:
-        st.error(f"[IMAGE DEBUG] Error → Picsum fallback: {str(e)}")
         return get_city_image(city)
 
 def generate_itinerary_video(itinerary_text, city, country, user_input):
@@ -2291,6 +2297,218 @@ def signup_page():
                     st.rerun()
             else:
                 st.error(message)
+
+def chatbot_page():
+    """AI-powered chatbot for tourism recommendations and assistance"""
+    st.title("💬 Tourism Assistant Chatbot")
+    st.markdown("Ask me anything about destinations, itineraries, and travel advice!")
+    
+    # Initialize Gemini if needed
+    if not GEMINI_AVAILABLE:
+        st.error("Gemini API not configured. Please check your API key.")
+        return
+    
+    # Sidebar settings
+    with st.sidebar:
+        st.subheader("Chatbot Settings")
+        
+        # Language selection
+        languages = ['English', 'French', 'Hindi', 'Japanese']
+        st.session_state.chat_language = st.selectbox(
+            "Select Language",
+            languages,
+            index=languages.index(st.session_state.chat_language)
+        )
+        
+        # Clear chat history button
+        if st.button("Clear Chat History", use_container_width=True):
+            st.session_state.chat_history = []
+            st.session_state.uploaded_images = []
+            st.rerun()
+        
+        st.markdown("---")
+        st.markdown("### Knowledge Base")
+        st.markdown("""
+        I have access to:
+        - Your personalization preferences
+        - Generated recommendations
+        - Custom itineraries
+        - Travel insights
+        """)
+    
+    # Tab layout for chat and image upload
+    tab1, tab2 = st.tabs(["💬 Chat", "📸 Upload Feedback"])
+    
+    with tab1:
+        # Display chat history
+        chat_container = st.container()
+        with chat_container:
+            for message in st.session_state.chat_history:
+                if message["role"] == "user":
+                    st.chat_message("user").write(message["content"])
+                else:
+                    st.chat_message("assistant").write(message["content"])
+        
+        # Chat input
+        st.markdown("---")
+        col1, col2 = st.columns([0.9, 0.1])
+        
+        with col1:
+            user_input = st.text_input(
+                "Your question:",
+                placeholder="Ask about destinations, modify itinerary, get travel tips...",
+                label_visibility="collapsed",
+                key="chat_input"
+            )
+        
+        with col2:
+            send_button = st.button("Send", use_container_width=True)
+        
+        # Process user input
+        if send_button and user_input:
+            # Add user message to history
+            st.session_state.chat_history.append({
+                "role": "user",
+                "content": user_input
+            })
+            
+            # Build context from previous modules
+            context = build_chatbot_context()
+            
+            # Generate response with Gemini
+            try:
+                model = genai.GenerativeModel("gemini-2.5-flash")
+                
+                # Create prompt with language and context
+                language_prompt = f"Respond in {st.session_state.chat_language}. "
+                full_prompt = f"""{language_prompt}You are a helpful tourism assistant with knowledge about the user's travel preferences and recommendations.
+
+User Context:
+{context}
+
+User Question: {user_input}
+
+Provide helpful, personalized travel advice."""
+                
+                response = model.generate_content(full_prompt)
+                assistant_response = response.text
+                
+                # Add assistant response to history
+                st.session_state.chat_history.append({
+                    "role": "assistant",
+                    "content": assistant_response
+                })
+                
+                # Save chat to Firebase if available
+                if FIREBASE_AVAILABLE and db and st.session_state.user_id:
+                    try:
+                        db.collection("chats").document(st.session_state.user_id).collection("messages").add({
+                            "timestamp": datetime.now(),
+                            "user_question": user_input,
+                            "assistant_response": assistant_response,
+                            "language": st.session_state.chat_language
+                        })
+                    except Exception as e:
+                        st.debug(f"Could not save chat to Firebase: {str(e)}")
+                
+                st.rerun()
+            
+            except Exception as e:
+                st.error(f"Error generating response: {str(e)}")
+    
+    with tab2:
+        st.subheader("Share Trip Feedback & Images")
+        st.markdown("Help us improve by sharing photos and feedback from your trips!")
+        
+        # Image upload
+        uploaded_files = st.file_uploader(
+            "Upload trip images",
+            type=["jpg", "jpeg", "png", "gif"],
+            accept_multiple_files=True
+        )
+        
+        if uploaded_files:
+            st.session_state.uploaded_images.extend(uploaded_files)
+            
+            # Display uploaded images
+            if st.session_state.uploaded_images:
+                st.markdown("### Uploaded Images")
+                cols = st.columns(3)
+                for idx, image_file in enumerate(st.session_state.uploaded_images):
+                    with cols[idx % 3]:
+                        image = PILImage.open(image_file)
+                        st.image(image, use_container_width=True)
+        
+        # Feedback text
+        st.markdown("---")
+        feedback_text = st.text_area(
+            "Share your feedback",
+            placeholder="Tell us about your experience...",
+            height=150
+        )
+        
+        # Rating
+        rating = st.slider("Rate your experience", 1, 5, 4)
+        
+        destination = st.text_input("Destination visited")
+        
+        # Submit feedback
+        if st.button("Submit Feedback", use_container_width=True, type="primary"):
+            if feedback_text and destination:
+                # Save feedback to Firebase
+                if FIREBASE_AVAILABLE and db and st.session_state.user_id:
+                    try:
+                        feedback_data = {
+                            "timestamp": datetime.now(),
+                            "destination": destination,
+                            "feedback": feedback_text,
+                            "rating": rating,
+                            "images_count": len(st.session_state.uploaded_images),
+                            "language": st.session_state.chat_language
+                        }
+                        db.collection("feedback").document(st.session_state.user_id).collection("trips").add(feedback_data)
+                        st.success("Thank you! Your feedback has been saved.")
+                        
+                        # Clear uploaded images after submission
+                        st.session_state.uploaded_images = []
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error saving feedback: {str(e)}")
+                else:
+                    st.error("Unable to save feedback. Please try again.")
+            else:
+                st.warning("Please fill in feedback and destination.")
+
+def build_chatbot_context():
+    """Build context from all previous modules for the chatbot"""
+    context = ""
+    
+    # User preferences
+    if st.session_state.cached_user_input:
+        context += "\n**User Preferences:**\n"
+        prefs = st.session_state.cached_user_input
+        context += f"- Age: {prefs.get('age', 'N/A')}\n"
+        context += f"- Interests: {prefs.get('interest', 'N/A')}\n"
+        context += f"- Trip Duration: {prefs.get('duration', 'N/A')} days\n"
+        context += f"- Weather Preference: {prefs.get('weather', 'N/A')}\n"
+        context += f"- Budget: {prefs.get('budget', 'N/A')}\n"
+    
+    # Current recommendations
+    if st.session_state.cached_ranked_results:
+        context += "\n**Current Recommendations:**\n"
+        results = st.session_state.cached_ranked_results
+        if isinstance(results, list) and len(results) > 0:
+            for idx, dest in enumerate(results[:3], 1):
+                dest_name = dest.get('destination', 'Unknown') if isinstance(dest, dict) else dest
+                context += f"{idx}. {dest_name}\n"
+    
+    # Current itinerary
+    if st.session_state.current_itinerary:
+        context += "\n**Current Itinerary:**\n"
+        context += f"City: {st.session_state.current_city or 'Not specified'}\n"
+        context += f"Duration: {st.session_state.current_user_input.get('duration', 'N/A') if st.session_state.current_user_input else 'N/A'} days\n"
+    
+    return context if context else "No previous travel planning data available."
 
 def auth_page():
     """Authentication page for login and signup"""
