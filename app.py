@@ -208,40 +208,26 @@ FIREBASE_API_KEY = None
 FIREBASE_PROJECT_ID = None
 
 def initialize_firebase_auth():
-    """Initialize Firebase Authentication using REST API"""
     global FIREBASE_AUTH_AVAILABLE, FIREBASE_API_KEY, FIREBASE_PROJECT_ID
-    
     try:
-        # Check if API key is in secrets
-        if "FIREBASE_API_KEY" not in st.secrets:
-            print("[v0] DEBUG: FIREBASE_API_KEY not found in secrets")
+        FIREBASE_API_KEY = st.secrets.get("FIREBASE_API_KEY")
+        FIREBASE_PROJECT_ID = st.secrets.get("FIREBASE_PROJECT_ID")
+        st.write("DEBUG API KEY:", FIREBASE_API_KEY)
+        st.write("DEBUG PROJECT ID:", FIREBASE_PROJECT_ID)
+        if FIREBASE_API_KEY and FIREBASE_PROJECT_ID:
+            FIREBASE_AUTH_AVAILABLE = True
+            return True
+        else:
+            st.error("Firebase keys missing in secrets")
             return False
-        
-        if "FIREBASE_PROJECT_ID" not in st.secrets:
-            print("[v0] DEBUG: FIREBASE_PROJECT_ID not found in secrets")
-            return False
-        
-        FIREBASE_API_KEY = st.secrets["FIREBASE_API_KEY"]
-        FIREBASE_PROJECT_ID = st.secrets["FIREBASE_PROJECT_ID"]
-        
-        print(f"[v0] DEBUG: Firebase initialized with API Key: {FIREBASE_API_KEY[:20]}...")
-        print(f"[v0] DEBUG: Firebase Project ID: {FIREBASE_PROJECT_ID}")
-        
-        FIREBASE_AUTH_AVAILABLE = True
-        return True
     except Exception as e:
-        print(f"[v0] DEBUG: Firebase init error: {str(e)}")
+        st.error(f"Firebase init error: {str(e)}")
         return False
 
 # Initialize Firebase Auth on startup
 if "firebase_init_checked" not in st.session_state:
-    result = initialize_firebase_auth()
+    initialize_firebase_auth()
     st.session_state.firebase_init_checked = True
-    print(f"[v0] DEBUG: Firebase auth available: {FIREBASE_AUTH_AVAILABLE}")
-    if not FIREBASE_AUTH_AVAILABLE:
-        print("[v0] DEBUG: Add these to .streamlit/secrets.toml:")
-        print('[v0] DEBUG: FIREBASE_API_KEY = "your_web_api_key_here"')
-        print('[v0] DEBUG: FIREBASE_PROJECT_ID = "tourism-recommendation-engine"')
 
 # -------------------------
 # DATASET LOADING
