@@ -209,25 +209,34 @@ FIREBASE_PROJECT_ID = None
 
 def initialize_firebase_auth():
     global FIREBASE_AUTH_AVAILABLE, FIREBASE_API_KEY, FIREBASE_PROJECT_ID
+
+    FIREBASE_API_KEY = None
+    FIREBASE_PROJECT_ID = None
+    FIREBASE_AUTH_AVAILABLE = False
+
     try:
-        FIREBASE_API_KEY = st.secrets.get("FIREBASE_API_KEY")
-        FIREBASE_PROJECT_ID = st.secrets.get("FIREBASE_PROJECT_ID")
+        # ✅ SAFE retrieval
+        FIREBASE_API_KEY = st.secrets.get("FIREBASE_API_KEY", None)
+        FIREBASE_PROJECT_ID = st.secrets.get("FIREBASE_PROJECT_ID", None)
+
         st.write("DEBUG API KEY:", FIREBASE_API_KEY)
         st.write("DEBUG PROJECT ID:", FIREBASE_PROJECT_ID)
-        if FIREBASE_API_KEY and FIREBASE_PROJECT_ID:
-            FIREBASE_AUTH_AVAILABLE = True
-            return True
-        else:
-            st.error("Firebase keys missing in secrets")
-            return False
+
+        # ✅ CHECK ACTUAL VALUES (not key existence)
+        if FIREBASE_API_KEY and len(FIREBASE_API_KEY) > 10:
+            if FIREBASE_PROJECT_ID and len(FIREBASE_PROJECT_ID) > 3:
+                FIREBASE_AUTH_AVAILABLE = True
+                return True
+
+        st.error("Firebase keys exist but validation failed")
+        return False
+
     except Exception as e:
         st.error(f"Firebase init error: {str(e)}")
         return False
 
 # Initialize Firebase Auth on startup
-if "firebase_init_checked" not in st.session_state:
-    initialize_firebase_auth()
-    st.session_state.firebase_init_checked = True
+initialize_firebase_auth()
 
 # -------------------------
 # DATASET LOADING
