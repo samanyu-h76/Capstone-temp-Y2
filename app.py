@@ -1073,9 +1073,8 @@ def get_city_image_pexels(city, width=800, height=500):
             return get_city_image(city)
         
         headers = {"Authorization": pexels_key}
-        # Improved search query for better travel destination images
         params = {
-            "query": f"{city} beautiful cityscape landmarks attractions tourism",
+            "query": f"{city} travel destination",
             "per_page": 1,
             "orientation": "landscape"
         }
@@ -2300,7 +2299,28 @@ def signup_page():
 
 def chatbot_page():
     """AI-powered chatbot for tourism recommendations and assistance"""
-    st.title("💬 Tourism Assistant Chatbot")
+    st.set_page_config(page_title="Tourism Assistant", layout="wide")
+    
+    # Custom CSS for better chat UI
+    st.markdown("""
+    <style>
+    .chat-message {
+        padding: 1rem;
+        margin-bottom: 0.5rem;
+        border-radius: 0.5rem;
+    }
+    .user-message {
+        background-color: #262730;
+        color: white;
+    }
+    .assistant-message {
+        background-color: #1f1f2e;
+        color: white;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    st.title("Tourism Assistant Chatbot")
     st.markdown("Ask me anything about destinations, itineraries, and travel advice!")
     
     # Initialize Gemini if needed
@@ -2310,78 +2330,84 @@ def chatbot_page():
     
     # Sidebar settings
     with st.sidebar:
-        st.subheader("Chatbot Settings")
+        st.subheader("Settings")
         
         # Language selection
         languages = ['English', 'French', 'Hindi', 'Japanese']
         st.session_state.chat_language = st.selectbox(
-            "Select Language",
+            "Response Language",
             languages,
             index=languages.index(st.session_state.chat_language)
         )
         
         # Clear chat history button
-        if st.button("Clear Chat History", use_container_width=True):
+        if st.button("Clear Chat", use_container_width=True):
             st.session_state.chat_history = []
-            st.session_state.uploaded_images = []
             st.rerun()
         
         st.markdown("---")
-        st.markdown("### Knowledge Base")
+        st.markdown("### Available Features")
         st.markdown("""
-        I have access to:
-        - Your personalization preferences
-        - Generated recommendations
-        - Custom itineraries
-        - Travel insights
+        - Ask about destinations
+        - Modify your itinerary
+        - Get travel tips & advice
+        - Share trip feedback
         """)
     
-    # Tab layout for chat and image upload
-    tab1, tab2 = st.tabs(["💬 Chat", "📸 Upload Feedback"])
+    # Main chat interface
+    col1, col2 = st.columns([0.7, 0.3], gap="medium")
     
-    with tab1:
-        # Display chat history
-        chat_container = st.container()
+    with col1:
+        st.markdown("### Chat")
+        
+        # Chat history container with scrolling
+        chat_container = st.container(border=True, height=400)
+        
         with chat_container:
-            for message in st.session_state.chat_history:
-                if message["role"] == "user":
-                    st.chat_message("user").write(message["content"])
-                else:
-                    st.chat_message("assistant").write(message["content"])
+            if len(st.session_state.chat_history) == 0:
+                st.markdown("*Start a conversation! Ask me about destinations, modify your itinerary, or get travel advice.*")
+            else:
+                for message in st.session_state.chat_history:
+                    if message["role"] == "user":
+                        st.chat_message("user").markdown(message["content"])
+                    else:
+                        st.chat_message("assistant").markdown(message["content"])
         
-        # Chat input
+        # Input area
         st.markdown("---")
-        col1, col2 = st.columns([0.9, 0.1])
         
-        with col1:
+        input_col1, input_col2 = st.columns([0.85, 0.15])
+        
+        with input_col1:
             user_input = st.text_input(
-                "Your question:",
-                placeholder="Ask about destinations, modify itinerary, get travel tips...",
+                "Your message:",
+                placeholder="Ask about destinations, modify itinerary, tips...",
                 label_visibility="collapsed",
-                key="chat_input"
+                key="chat_input_" + str(len(st.session_state.chat_history))
             )
         
-        with col2:
-            send_button = st.button("Send", use_container_width=True)
+        with input_col2:
+            send_button = st.button("Send", use_container_width=True, type="primary")
         
         # Process user input
-        if send_button and user_input:
+        if send_button and user_input.strip():
             # Add user message to history
             st.session_state.chat_history.append({
                 "role": "user",
                 "content": user_input
             })
             
-            # Build context from previous modules
+            # Build context from available session state
             context = build_chatbot_context()
             
             # Generate response with Gemini
             try:
-                model = genai.GenerativeModel("gemini-2.5-flash")
-                
-                # Create prompt with language and context
-                language_prompt = f"Respond in {st.session_state.chat_language}. "
-                full_prompt = f"""{language_prompt}You are a helpful tourism assistant with knowledge about the user's travel preferences and recommendations.
+                with st.spinner("Generating response..."):
+                    model = genai.GenerativeModel("gemini-2.5-flash")
+                    
+                    # Create prompt with language and context
+                    language_instruction = f"Respond in {st.session_state.chat_language}. Keep responses concise and helpful. "
+                    full_prompt = f"""{language_instruction}You are a friendly and knowledgeable tourism assistant.
 
 User Context:
 {context}
@@ -2389,126 +2415,117 @@ User Context:
 User Question: {user_input}
 
 Provide helpful, personalized travel advice."""
-                
-                response = model.generate_content(full_prompt)
-                assistant_response = response.text
-                
-                # Add assistant response to history
-                st.session_state.chat_history.append({
-                    "role": "assistant",
-                    "content": assistant_response
-                })
-                
-                # Save chat to Firebase if available
-                if FIREBASE_AVAILABLE and db and st.session_state.user_id:
+                    
+                    response = model.generate_content(full_prompt)
+                    assistant_response = response.text
+                    
+                    # Add assistant response to history
+                    st.session_state.chat_history.append({
+                        "role": "assistant",
+                        "content": assistant_response
+                    })
+                    
+                    # Save chat to Firebase if available
                     try:
-                        db.collection("chats").document(st.session_state.user_id).collection("messages").add({
-                            "timestamp": datetime.now(),
-                            "user_question": user_input,
-                            "assistant_response": assistant_response,
-                            "language": st.session_state.chat_language
-                        })
+                        if FIREBASE_AVAILABLE and db and st.session_state.get("user_id"):
+                            db.collection("chats").document(st.session_state.user_id).collection("messages").add({
+                                "timestamp": datetime.now(),
+                                "user_question": user_input,
+                                "assistant_response": assistant_response,
+                                "language": st.session_state.chat_language
+                            })
                     except Exception as e:
-                        st.debug(f"Could not save chat to Firebase: {str(e)}")
-                
-                st.rerun()
+                        pass  # Silently fail Firebase save
+                    
+                    st.rerun()
             
             except Exception as e:
                 st.error(f"Error generating response: {str(e)}")
     
-    with tab2:
-        st.subheader("Share Trip Feedback & Images")
-        st.markdown("Help us improve by sharing photos and feedback from your trips!")
+    with col2:
+        st.markdown("### Trip Feedback")
+        st.markdown("Share your travel experience with us!")
         
-        # Image upload
-        uploaded_files = st.file_uploader(
-            "Upload trip images",
-            type=["jpg", "jpeg", "png", "gif"],
-            accept_multiple_files=True
-        )
-        
-        if uploaded_files:
-            st.session_state.uploaded_images.extend(uploaded_files)
+        # Feedback section
+        with st.form("feedback_form"):
+            destination = st.text_input("Destination visited")
+            feedback_text = st.text_area(
+                "Your feedback",
+                placeholder="Tell us about your experience...",
+                height=120
+            )
+            rating = st.slider("Rating", 1, 5, 4)
             
-            # Display uploaded images
-            if st.session_state.uploaded_images:
-                st.markdown("### Uploaded Images")
-                cols = st.columns(3)
-                for idx, image_file in enumerate(st.session_state.uploaded_images):
-                    with cols[idx % 3]:
-                        image = PILImage.open(image_file)
-                        st.image(image, use_container_width=True)
-        
-        # Feedback text
-        st.markdown("---")
-        feedback_text = st.text_area(
-            "Share your feedback",
-            placeholder="Tell us about your experience...",
-            height=150
-        )
-        
-        # Rating
-        rating = st.slider("Rate your experience", 1, 5, 4)
-        
-        destination = st.text_input("Destination visited")
-        
-        # Submit feedback
-        if st.button("Submit Feedback", use_container_width=True, type="primary"):
-            if feedback_text and destination:
+            # Image upload
+            uploaded_files = st.file_uploader(
+                "Upload trip images",
+                type=["jpg", "jpeg", "png", "gif"],
+                accept_multiple_files=True
+            )
+            
+            submitted = st.form_submit_button("Submit Feedback", use_container_width=True)
+            
+            if submitted and feedback_text.strip() and destination.strip():
                 # Save feedback to Firebase
-                if FIREBASE_AVAILABLE and db and st.session_state.user_id:
-                    try:
+                try:
+                    if FIREBASE_AVAILABLE and db and st.session_state.get("user_id"):
                         feedback_data = {
                             "timestamp": datetime.now(),
                             "destination": destination,
                             "feedback": feedback_text,
                             "rating": rating,
-                            "images_count": len(st.session_state.uploaded_images),
+                            "images_count": len(uploaded_files) if uploaded_files else 0,
                             "language": st.session_state.chat_language
                         }
                         db.collection("feedback").document(st.session_state.user_id).collection("trips").add(feedback_data)
                         st.success("Thank you! Your feedback has been saved.")
-                        
-                        # Clear uploaded images after submission
-                        st.session_state.uploaded_images = []
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error saving feedback: {str(e)}")
-                else:
-                    st.error("Unable to save feedback. Please try again.")
-            else:
-                st.warning("Please fill in feedback and destination.")
+                    else:
+                        st.success("Feedback received (local only)")
+                except Exception as e:
+                    st.warning("Feedback saved locally")
+            elif submitted:
+                st.warning("Please fill in destination and feedback")
 
 def build_chatbot_context():
     """Build context from all previous modules for the chatbot"""
-    context = ""
+    context = "No previous planning data available yet."
+    context_parts = []
     
-    # User preferences
-    if st.session_state.cached_user_input:
-        context += "\n**User Preferences:**\n"
-        prefs = st.session_state.cached_user_input
-        context += f"- Age: {prefs.get('age', 'N/A')}\n"
-        context += f"- Interests: {prefs.get('interest', 'N/A')}\n"
-        context += f"- Trip Duration: {prefs.get('duration', 'N/A')} days\n"
-        context += f"- Weather Preference: {prefs.get('weather', 'N/A')}\n"
-        context += f"- Budget: {prefs.get('budget', 'N/A')}\n"
+    try:
+        # User preferences
+        if st.session_state.get("cached_user_input"):
+            prefs = st.session_state.cached_user_input
+            if isinstance(prefs, dict):
+                context_parts.append(f"User Preferences: Age {prefs.get('age', '?')}, Interests: {prefs.get('interest', 'N/A')}, Duration: {prefs.get('duration', 'N/A')} days, Budget: {prefs.get('budget', 'N/A')}")
+        
+        # Current recommendations
+        if st.session_state.get("cached_ranked_results"):
+            results = st.session_state.cached_ranked_results
+            if isinstance(results, list) and len(results) > 0:
+                dest_list = []
+                for dest in results[:3]:
+                    if isinstance(dest, dict):
+                        dest_list.append(dest.get('destination', 'Unknown'))
+                    else:
+                        dest_list.append(str(dest))
+                if dest_list:
+                    context_parts.append(f"Recommended Destinations: {', '.join(dest_list)}")
+        
+        # Current itinerary
+        if st.session_state.get("current_itinerary"):
+            city = st.session_state.get("current_city", "Not specified")
+            duration = "N/A"
+            if st.session_state.get("current_user_input") and isinstance(st.session_state.current_user_input, dict):
+                duration = st.session_state.current_user_input.get('duration', 'N/A')
+            context_parts.append(f"Current Itinerary: {city} ({duration} days)")
+        
+        if context_parts:
+            context = "\n".join(context_parts)
     
-    # Current recommendations
-    if st.session_state.cached_ranked_results:
-        context += "\n**Current Recommendations:**\n"
-        results = st.session_state.cached_ranked_results
-        if isinstance(results, list) and len(results) > 0:
-            for idx, dest in enumerate(results[:3], 1):
-                dest_name = dest.get('destination', 'Unknown') if isinstance(dest, dict) else dest
-                context += f"{idx}. {dest_name}\n"
+    except Exception as e:
+        context = "Using general travel knowledge."
     
-    # Current itinerary
-    if st.session_state.current_itinerary:
-        context += "\n**Current Itinerary:**\n"
-        context += f"City: {st.session_state.current_city or 'Not specified'}\n"
-        context += f"Duration: {st.session_state.current_user_input.get('duration', 'N/A') if st.session_state.current_user_input else 'N/A'} days\n"
-    
-    return context if context else "No previous travel planning data available."
+    return context
 
 def auth_page():
     """Authentication page for login and signup"""
