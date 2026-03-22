@@ -958,7 +958,7 @@ GENERATE THE FULL ITINERARY NOW:"""
             prompt,
             generation_config=genai.types.GenerationConfig(
                 temperature=0.8,
-                max_output_tokens=8000,
+                max_output_tokens=16000,
                 top_p=0.95,
                 top_k=40
             )
@@ -998,7 +998,7 @@ WRITE EVERYTHING IN FULL DETAIL. INCLUDE ALL {duration} DAYS COMPLETELY."""
             prompt,
             generation_config=genai.types.GenerationConfig(
                 temperature=0.8,
-                max_output_tokens=8000,
+                max_output_tokens=16000,
                 top_p=0.95,
                 top_k=40
             )
@@ -2052,7 +2052,7 @@ def itinerary_page():
         st.text_area(
             "Full Itinerary",
             value=itinerary,
-            height=750,
+            height=None,
             disabled=True,
             label_visibility="collapsed"
         )
