@@ -2175,9 +2175,21 @@ def login_page():
     st.markdown("## Welcome Back!")
     st.markdown("Sign in to your account to continue")
     
-    # DEBUG: Show Firebase status
-    if not FIREBASE_AUTH_AVAILABLE:
-        with st.expander("🔧 Firebase Setup Required", expanded=True):
+    # DEBUG: Show Firebase status and secrets
+    with st.expander("🔧 Firebase Configuration Status", expanded=not FIREBASE_AUTH_AVAILABLE):
+        st.write("FIREBASE_AUTH_AVAILABLE:", FIREBASE_AUTH_AVAILABLE)
+        st.write("FIREBASE_API_KEY set:", bool(FIREBASE_API_KEY))
+        st.write("FIREBASE_PROJECT_ID set:", bool(FIREBASE_PROJECT_ID))
+        
+        # Check if secrets are loaded
+        try:
+            st.write("API KEY LENGTH:", len(st.secrets.get("FIREBASE_API_KEY", "")))
+            st.write("API KEY:", st.secrets.get("FIREBASE_API_KEY", "NOT SET"))
+            st.write("PROJECT ID:", st.secrets.get("FIREBASE_PROJECT_ID", "NOT SET"))
+        except Exception as e:
+            st.error(f"Error reading secrets: {str(e)}")
+        
+        if not FIREBASE_AUTH_AVAILABLE:
             st.error("Firebase authentication is not configured")
             st.markdown("""
             **To fix this:**
@@ -2220,9 +2232,21 @@ def signup_page():
     st.markdown("## Create Your Account")
     st.markdown("Join our community to get personalized travel recommendations")
     
-    # DEBUG: Show Firebase status
-    if not FIREBASE_AUTH_AVAILABLE:
-        with st.expander("🔧 Firebase Setup Required", expanded=True):
+    # DEBUG: Show Firebase status and secrets
+    with st.expander("🔧 Firebase Configuration Status", expanded=not FIREBASE_AUTH_AVAILABLE):
+        st.write("FIREBASE_AUTH_AVAILABLE:", FIREBASE_AUTH_AVAILABLE)
+        st.write("FIREBASE_API_KEY set:", bool(FIREBASE_API_KEY))
+        st.write("FIREBASE_PROJECT_ID set:", bool(FIREBASE_PROJECT_ID))
+        
+        # Check if secrets are loaded
+        try:
+            st.write("API KEY LENGTH:", len(st.secrets.get("FIREBASE_API_KEY", "")))
+            st.write("API KEY:", st.secrets.get("FIREBASE_API_KEY", "NOT SET"))
+            st.write("PROJECT ID:", st.secrets.get("FIREBASE_PROJECT_ID", "NOT SET"))
+        except Exception as e:
+            st.error(f"Error reading secrets: {str(e)}")
+        
+        if not FIREBASE_AUTH_AVAILABLE:
             st.error("Firebase authentication is not configured")
             st.markdown("""
             **To fix this:**
