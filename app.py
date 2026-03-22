@@ -2402,19 +2402,21 @@ def chatbot_page():
             
             # Generate response with Gemini
             try:
-                with st.spinner("Generating response..."):
+                with st.spinner("Generating personalized response..."):
                     model = genai.GenerativeModel("gemini-2.5-flash")
                     
-                    # Create prompt with language and context
-                    language_instruction = f"Respond in {st.session_state.chat_language}. Keep responses concise and helpful. "
-                    full_prompt = f"""{language_instruction}You are a friendly and knowledgeable tourism assistant.
+                    # Create comprehensive prompt with full context
+                    language_instruction = f"Respond in {st.session_state.chat_language}. Be personalized, specific, and helpful. "
+                    full_prompt = f"""{language_instruction}You are an expert tourism assistant who provides personalized travel recommendations and advice based on the user's specific travel profile, interests, and previously recommended destinations.
 
-User Context:
+=== USER'S TRAVEL PROFILE AND HISTORY ===
 {context}
 
-User Question: {user_input}
+=== USER QUESTION ===
+{user_input}
 
-Provide helpful, personalized travel advice."""
+=== YOUR RESPONSE ===
+Based on the user's profile and travel history above, provide a detailed, personalized response that references their specific interests, budget, duration, and previous recommendations where relevant. Be specific and helpful."""
                     
                     response = model.generate_content(full_prompt)
                     assistant_response = response.text
@@ -2432,7 +2434,8 @@ Provide helpful, personalized travel advice."""
                                 "timestamp": datetime.now(),
                                 "user_question": user_input,
                                 "assistant_response": assistant_response,
-                                "language": st.session_state.chat_language
+                                "language": st.session_state.chat_language,
+                                "context_available": bool(st.session_state.get("user_input") or st.session_state.get("cached_ranked_results"))
                             })
                     except Exception as e:
                         pass  # Silently fail Firebase save
@@ -2441,6 +2444,12 @@ Provide helpful, personalized travel advice."""
             
             except Exception as e:
                 st.error(f"Error generating response: {str(e)}")
+        
+        # Show available context at the bottom
+        if st.session_state.chat_history and len(st.session_state.chat_history) > 0:
+            with st.expander("View Context Being Used", expanded=False):
+                context = build_chatbot_context()
+                st.markdown(context)
     
     with col2:
         st.markdown("### Trip Feedback")
@@ -2487,43 +2496,100 @@ Provide helpful, personalized travel advice."""
                 st.warning("Please fill in destination and feedback")
 
 def build_chatbot_context():
-    """Build context from all previous modules for the chatbot"""
-    context = "No previous planning data available yet."
+    """Build detailed context from all previous modules for the chatbot"""
     context_parts = []
     
     try:
-        # User preferences
-        if st.session_state.get("cached_user_input"):
-            prefs = st.session_state.cached_user_input
+        # 1. USER PREFERENCES FROM PERSONALIZATION
+        if st.session_state.get("user_input"):
+            prefs = st.session_state.user_input
             if isinstance(prefs, dict):
-                context_parts.append(f"User Preferences: Age {prefs.get('age', '?')}, Interests: {prefs.get('interest', 'N/A')}, Duration: {prefs.get('duration', 'N/A')} days, Budget: {prefs.get('budget', 'N/A')}")
+                pref_text = "USER PROFILE:\n"
+                pref_text += f"- Age: {prefs.get('age', 'Not specified')}\n"
+                pref_text += f"- Primary Interest: {prefs.get('interest', 'Not specified')}\n"
+                pref_text += f"- Trip Duration: {prefs.get('duration', 'Not specified')} days\n"
+                pref_text += f"- Weather Preference: {prefs.get('weather', 'Not specified')}\n"
+                pref_text += f"- Budget Level: {prefs.get('budget', 'Not specified')}\n"
+                
+                # Optional preferences
+                if prefs.get('season'):
+                    pref_text += f"- Preferred Season: {prefs.get('season')}\n"
+                if prefs.get('travel_style'):
+                    pref_text += f"- Travel Style: {prefs.get('travel_style')}\n"
+                if prefs.get('activity_level'):
+                    pref_text += f"- Activity Level: {prefs.get('activity_level')}\n"
+                if prefs.get('accommodation'):
+                    pref_text += f"- Accommodation Preference: {prefs.get('accommodation')}\n"
+                
+                context_parts.append(pref_text)
         
-        # Current recommendations
-        if st.session_state.get("cached_ranked_results"):
+        # 2. RECOMMENDATIONS DATA
+        if st.session_state.get("cached_ranked_results") is not None:
             results = st.session_state.cached_ranked_results
-            if isinstance(results, list) and len(results) > 0:
-                dest_list = []
-                for dest in results[:3]:
+            
+            # Handle DataFrame
+            if hasattr(results, 'iterrows'):
+                rec_text = "RECOMMENDED DESTINATIONS:\n"
+                for idx, (_, row) in enumerate(results.head(5).iterrows(), 1):
+                    city = row.get('city', 'Unknown')
+                    country = row.get('country', 'Unknown')
+                    rating = row.get('avg_rating', 'N/A')
+                    score = row.get('final_score', 'N/A')
+                    description = row.get('description', '')[:100]  # First 100 chars
+                    rec_text += f"{idx}. {city}, {country} (Rating: {rating}/5, Match Score: {score:.2f})\n"
+                    rec_text += f"   {description}...\n"
+                context_parts.append(rec_text)
+            
+            # Handle list
+            elif isinstance(results, list) and len(results) > 0:
+                rec_text = "RECOMMENDED DESTINATIONS:\n"
+                for idx, dest in enumerate(results[:5], 1):
                     if isinstance(dest, dict):
-                        dest_list.append(dest.get('destination', 'Unknown'))
+                        city = dest.get('city', dest.get('destination', 'Unknown'))
+                        country = dest.get('country', '')
+                        rec_text += f"{idx}. {city}, {country}\n"
                     else:
-                        dest_list.append(str(dest))
-                if dest_list:
-                    context_parts.append(f"Recommended Destinations: {', '.join(dest_list)}")
+                        rec_text += f"{idx}. {str(dest)}\n"
+                context_parts.append(rec_text)
         
-        # Current itinerary
+        # 3. CURRENT ITINERARY DATA
         if st.session_state.get("current_itinerary"):
+            itinerary = st.session_state.current_itinerary
             city = st.session_state.get("current_city", "Not specified")
-            duration = "N/A"
+            
+            itin_text = f"CURRENT ITINERARY FOR {city}:\n"
+            
+            # Add user input details for this itinerary
             if st.session_state.get("current_user_input") and isinstance(st.session_state.current_user_input, dict):
-                duration = st.session_state.current_user_input.get('duration', 'N/A')
-            context_parts.append(f"Current Itinerary: {city} ({duration} days)")
+                user_inp = st.session_state.current_user_input
+                itin_text += f"Duration: {user_inp.get('duration', 'N/A')} days\n"
+                itin_text += f"Budget: {user_inp.get('budget', 'N/A')}\n"
+            
+            # Add itinerary details
+            if isinstance(itinerary, str):
+                # If it's a string, add first 500 chars
+                itin_text += f"Plan:\n{itinerary[:500]}...\n"
+            elif isinstance(itinerary, dict):
+                for key, value in list(itinerary.items())[:5]:
+                    itin_text += f"- {key}: {str(value)[:100]}\n"
+            
+            context_parts.append(itin_text)
         
+        # 4. CACHED ITINERARIES
+        if st.session_state.get("cached_itineraries") and len(st.session_state.cached_itineraries) > 0:
+            cache_text = "PREVIOUS ITINERARIES:\n"
+            for city_name in list(st.session_state.cached_itineraries.keys())[:3]:
+                cache_text += f"- {city_name}\n"
+            context_parts.append(cache_text)
+        
+        # Combine all context
         if context_parts:
-            context = "\n".join(context_parts)
+            context = "\n---\n".join(context_parts)
+        else:
+            context = "No previous planning data available. I'm ready to help you plan your trip!"
     
     except Exception as e:
-        context = "Using general travel knowledge."
+        context = f"Using general travel knowledge. (Note: Could not load full context)"
     
     return context
 
