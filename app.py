@@ -1022,8 +1022,71 @@ WRITE EVERYTHING IN FULL DETAIL. INCLUDE ALL {duration} DAYS COMPLETELY."""
 # VIDEO GENERATION FUNCTIONS
 # =========================
 
+def generate_video_caption(section_text, day_num, time_period):
+    """Use Gemini to generate a short video subtitle for one itinerary section"""
+    fallback = f"Day {day_num} • {time_period} activity"
+
+    if not GEMINI_AVAILABLE:
+        return fallback
+
+    try:
+        model = genai.GenerativeModel("gemini-2.5-flash")
+
+        prompt = f"""
+You are creating subtitles for a travel recap video.
+
+TASK:
+Summarize this itinerary section into ONE short cinematic subtitle.
+
+RULES:
+- Maximum 8 words
+- Do NOT copy the itinerary wording directly
+- Make it sound like a recap caption
+- No hashtags
+- No quotation marks
+- No emojis
+- No full stop at the end
+- Keep it natural and travel-video style
+
+OUTPUT:
+Return only the subtitle text.
+
+DAY: {day_num}
+TIME PERIOD: {time_period}
+
+ITINERARY SECTION:
+{section_text}
+"""
+
+        response = model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.6,
+                max_output_tokens=30,
+            )
+        )
+
+        if response and response.text:
+            caption = response.text.strip().replace("\n", " ").strip()
+            caption = caption.replace('"', '').replace("'", "")
+
+            # hard safety cap
+            words = caption.split()
+            if len(words) > 8:
+                caption = " ".join(words[:8])
+
+            if len(caption) > 55:
+                caption = caption[:52].rstrip() + "..."
+
+            return caption if caption else fallback
+
+        return fallback
+
+    except Exception:
+        return fallback
+        
 def parse_itinerary_into_days(itinerary_text):
-    """Parse itinerary text into day-wise video data with short summarized captions"""
+    """Parse itinerary text into day-wise video data with AI-generated captions"""
     days_data = []
 
     day_pattern = r'\*\*Day\s+(\d+)\s*-\s*([^*]+)\*\*'
@@ -1043,53 +1106,18 @@ def parse_itinerary_into_days(itinerary_text):
         text = text.replace('*', '').replace('#', '')
         return text
 
-    def summarize_for_subtitle(period, content, day_num):
-        content = clean_text(content)
-
-        # take first sentence only
-        first_sentence = content.split('.')[0].strip() if '.' in content else content
-
-        # remove very long bracket-style or extra detail
-        first_sentence = re.sub(r'\([^)]*\)', '', first_sentence).strip()
-
-        # make it shorter and recap-like
-        if len(first_sentence) > 55:
-            words = first_sentence.split()
-            short_text = ""
-            for word in words:
-                test = f"{short_text} {word}".strip()
-                if len(test) <= 55:
-                    short_text = test
-                else:
-                    break
-            first_sentence = short_text
-
-        # fallback if too empty
-        if not first_sentence:
-            first_sentence = f"{period.replace(':', '')} activity"
-
-        # final subtitle with day + section
-        subtitle = f"Day {day_num} • {period.replace(':', '')} • {first_sentence}"
-
-        # hard cap to prevent cut-off
-        if len(subtitle) > 75:
-            subtitle = subtitle[:72].rstrip() + "..."
-
-        return subtitle
-
     def extract_location_name(content, fallback):
         content = clean_text(content)
         first_sentence = content.split('.')[0].strip() if '.' in content else content
+        first_sentence = re.sub(r'\([^)]*\)', '', first_sentence).strip()
+
         words = first_sentence.split()
-
         if len(words) >= 4:
-            location_name = " ".join(words[:4])
+            return " ".join(words[:4]).strip()
         elif first_sentence:
-            location_name = first_sentence[:40]
+            return first_sentence[:40].strip()
         else:
-            location_name = fallback
-
-        return location_name.strip()
+            return fallback
 
     for i, match in enumerate(day_matches):
         day_num = match.group(1)
@@ -1115,20 +1143,17 @@ def parse_itinerary_into_days(itinerary_text):
 
                 if content:
                     location_name = extract_location_name(content, day_title)
-                    subtitle = summarize_for_subtitle(period, content, day_num)
+                    ai_caption = generate_video_caption(content, day_num, period.replace(':', ''))
 
                     locations.append({
                         "time_period": period.replace(':', ''),
                         "location": location_name,
-                        "caption": subtitle,
+                        "caption": ai_caption,
                         "description": content
                     })
 
         if not locations:
-            fallback_caption = f"Day {day_num} • {day_title}"
-            if len(fallback_caption) > 75:
-                fallback_caption = fallback_caption[:72].rstrip() + "..."
-
+            fallback_caption = generate_video_caption(day_content or day_title, day_num, "Day Recap")
             locations = [{
                 "time_period": "All Day",
                 "location": day_title,
@@ -1287,7 +1312,7 @@ def generate_itinerary_video(itinerary_text, city, country, user_input):
 
                     subtitle_text = location.get("caption", "").strip()
                     if not subtitle_text:
-                        subtitle_text = f"{location.get('time_period', 'Stop')}: {location.get('location', city)}"
+                        subtitle_text = f"Day {day_data['day_num']} recap"
 
                     # Keep subtitle concise enough to render cleanly
                     if len(subtitle_text) > 80:
