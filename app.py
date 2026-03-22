@@ -1338,6 +1338,18 @@ if len(subtitle_text) > 70:
         cut = cut.rsplit(" ", 1)[0]
     subtitle_text = cut + "..."
 
+                    subtitle_text = location.get("caption", "").strip()
+                    if not subtitle_text:
+                        subtitle_text = f"Exploring the best of Day {day_data['day_num']}"
+
+                    subtitle_text = re.sub(r'\s+', ' ', subtitle_text).strip()
+                    
+                    if len(subtitle_text) > 70:
+                        cut = subtitle_text[:67].rstrip()
+                        if " " in cut:
+                            cut = cut.rsplit(" ", 1)[0]
+                        subtitle_text = cut + "..."
+                    
                     try:
                         subtitle_bg = (
                             ColorClip(size=(video_width, subtitle_bar_height), color=(0, 0, 0))
