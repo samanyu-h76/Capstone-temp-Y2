@@ -2411,34 +2411,11 @@ def chatbot_page():
             if len(st.session_state.chat_history) == 0:
                 st.markdown("*Start a conversation! Ask me about destinations, modify your itinerary, or get travel advice.*")
             else:
-                for idx, message in enumerate(st.session_state.chat_history):
+                for message in st.session_state.chat_history:
                     if message["role"] == "user":
                         st.chat_message("user").markdown(message["content"])
                     else:
                         st.chat_message("assistant").markdown(message["content"])
-                        
-                        # Add feedback buttons for assistant messages
-                        fb_col1, fb_col2, fb_col3 = st.columns([0.15, 0.15, 0.7])
-                        with fb_col1:
-                            if st.button("👍", key=f"like_{idx}", help="Helpful"):
-                                save_feedback_to_firebase(
-                                    module="chatbot",
-                                    feedback_type="like",
-                                    target=f"message_{idx}",
-                                    value=True,
-                                    metadata={"message_preview": message["content"][:100]}
-                                )
-                                st.success("Thanks for the feedback!", icon="✓")
-                        with fb_col2:
-                            if st.button("👎", key=f"dislike_{idx}", help="Not helpful"):
-                                save_feedback_to_firebase(
-                                    module="chatbot",
-                                    feedback_type="like",
-                                    target=f"message_{idx}",
-                                    value=False,
-                                    metadata={"message_preview": message["content"][:100]}
-                                )
-                                st.info("We'll improve!", icon="ℹ")
         
         # Input area
         st.markdown("---")
@@ -2669,97 +2646,6 @@ def build_chatbot_context():
         context = f"Using general travel knowledge. (Note: Could not load full context)"
     
     return context
-
-# =========================
-# PAGE FUNCTIONS
-# =========================
-def home_page():
-    """Home page"""
-    st.title("Welcome to Tourism Engine")
-    st.markdown("Navigate using the sidebar to explore features")
-
-def personalization_page():
-    """Personalization page - user preferences"""
-    st.title("Personalization")
-    st.markdown("Set your travel preferences here")
-
-def recommendations_page():
-    """Recommendations page with feedback"""
-    st.title("Recommendations")
-    st.markdown("Here are your personalized recommendations")
-    
-    # Example: Add feedback for recommendations if data exists
-    if st.session_state.get("cached_ranked_results") is not None:
-        st.success("Recommendations loaded")
-        # Feedback UI will be added here based on displayed recommendations
-
-def itinerary_page():
-    """Itinerary page with feedback"""
-    st.title("Itinerary")
-    
-    if not st.session_state.get("current_itinerary"):
-        st.info("Generate an itinerary first in the Personalization section")
-        return
-    
-    # Display itinerary
-    city = st.session_state.get("current_city", "Unknown")
-    st.subheader(f"Your Itinerary: {city}")
-    
-    itinerary_content = st.session_state.current_itinerary
-    if isinstance(itinerary_content, str):
-        st.markdown(itinerary_content)
-    else:
-        st.write(itinerary_content)
-    
-    # Itinerary Feedback Section
-    st.markdown("---")
-    st.subheader("Rate This Itinerary")
-    
-    feedback_col1, feedback_col2 = st.columns([0.5, 0.5])
-    
-    with feedback_col1:
-        rating = st.slider("How helpful is this itinerary?", 1, 5, 4, key="itinerary_rating")
-    
-    with feedback_col2:
-        feedback_text = st.text_area(
-            "Optional feedback",
-            placeholder="Tell us what you think about this itinerary...",
-            height=100,
-            key="itinerary_feedback_text"
-        )
-    
-    # Submit button
-    col1, col2, col3 = st.columns([0.3, 0.3, 0.4])
-    with col1:
-        if st.button("Submit Rating", use_container_width=True, type="primary"):
-            # Save rating
-            save_feedback_to_firebase(
-                module="itinerary",
-                feedback_type="rating",
-                target=city,
-                value=rating,
-                metadata={
-                    "itinerary_preview": itinerary_content[:200] if isinstance(itinerary_content, str) else str(itinerary_content)[:200],
-                    "has_text_feedback": bool(feedback_text.strip())
-                }
-            )
-            
-            # Save text feedback if provided
-            if feedback_text.strip():
-                save_feedback_to_firebase(
-                    module="itinerary",
-                    feedback_type="text",
-                    target=city,
-                    value=feedback_text,
-                    metadata={"rating": rating}
-                )
-            
-            st.success("Thank you! Your feedback has been saved.")
-
-def video_page():
-    """Video page with feedback"""
-    st.title("Video Guides")
-    st.markdown("Watch destination guides here")
 
 def auth_page():
     """Authentication page for login and signup"""
