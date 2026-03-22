@@ -2413,19 +2413,126 @@ def home_page():
     """)
 
 def personalization_page():
-    """Personalization page for collecting user preferences"""
-    st.title("Tell Us Your Preferences")
-    st.markdown("Help us understand your travel style to get better recommendations")
+    """
+    FEATURE 1 & 2: Personalization with Cuisine + Proper Session Caching
+    """
+    st.title("📝 Personalization")
+    st.markdown("Tell us about yourself so we can recommend the perfect destinations!")
+    st.markdown("---")
     
-    col1, col2 = st.columns(2)
+    # Get cached data - THIS NOW WORKS PROPERLY
+    cached_data = st.session_state.cached_user_input
+    
+    col1, col2 = st.columns([1, 1])
+    
     with col1:
-        age = st.slider("Age", 18, 80, 30)
-        gender = st.selectbox("Gender", ["Male", "Female", "Other"])
-    with col2:
-        budget = st.selectbox("Budget", ["Low", "Medium", "High", "Very High"])
-        travel_style = st.selectbox("Travel Style", ["Adventure", "Relaxation", "Cultural", "Luxury"])
+        age = st.slider(
+            "Your Age",
+            min_value=18,
+            max_value=80,
+            value=cached_data['age']
+        )
+        
+        # FEATURE 1: CUISINE OPTION
+        interest = st.selectbox(
+            "Primary Interest",
+            ["Culture", "Adventure", "Nature", "Beach", "Cuisine"],
+            index=["Culture", "Adventure", "Nature", "Beach", "Cuisine"].index(cached_data['interest'])
+        )
+        
+        trip_duration = st.slider(
+            "Trip Duration (days)",
+            1, 14,
+            value=cached_data['duration']
+        )
+        
+        season = st.selectbox(
+            "Season",
+            ["Spring", "Summer", "Autumn", "Winter"],
+            index=["Spring", "Summer", "Autumn", "Winter"].index(cached_data['season'])
+        )
     
-    st.success("Preferences saved! Go to Recommendations to see destinations tailored for you.")
+    with col2:
+        weather = st.selectbox(
+            "Weather Preference",
+            ["Cold", "Pleasant", "Warm"],
+            index=["Cold", "Pleasant", "Warm"].index(cached_data['weather'])
+        )
+        
+        budget = st.selectbox(
+            "Budget Level",
+            ["Budget", "Mid-range", "Luxury"],
+            index=["Budget", "Mid-range", "Luxury"].index(cached_data['budget'])
+        )
+        
+        continent = st.selectbox(
+            "Preferred Continent",
+            ["All Continents", "Africa", "Asia", "Europe", "North America", "South America", "Oceania", "Middle East"],
+            index=["All Continents", "Africa", "Asia", "Europe", "North America", "South America", "Oceania", "Middle East"].index(cached_data.get('continent', 'All Continents'))
+        )
+        
+        # Get countries based on continent selection
+        if master is not None:
+            if continent == "All Continents":
+                countries_list = ["All Countries"] + sorted(master['country'].unique().tolist())
+            else:
+                continent_map = {
+                    "Africa": "africa",
+                    "Asia": "asia",
+                    "Europe": "europe",
+                    "North America": "north_america",
+                    "South America": "south_america",
+                    "Oceania": "oceania",
+                    "Middle East": "middle_east"
+                }
+                filtered_countries = master[master['region'] == continent_map[continent]]['country'].unique()
+                countries_list = ["All Countries"] + sorted(filtered_countries.tolist())
+            
+            country = st.selectbox(
+                "Specific Country (Optional)",
+                countries_list,
+                index=0 if continent == "All Continents" else min(0, len(countries_list) - 1)
+            )
+        else:
+            country = "All Countries"
+    
+    st.markdown("---")
+    st.markdown("### Your Profile Summary")
+    st.info(f"""
+    **Age:** {age} years old | **Interest:** {interest} | **Duration:** {trip_duration} days
+    **Season:** {season} | **Weather:** {weather} | **Budget:** {budget}
+    **Preferred Region:** {continent} | **Country:** {country}
+    """)
+    
+    st.markdown("---")
+    
+    # Check if preferences have changed to trigger new recommendations
+    current_preferences = {
+        "age": age,
+        "interest": interest,
+        "duration": trip_duration,
+        "weather": weather,
+        "season": season,
+        "budget": budget,
+        "continent": continent,
+        "country": country
+    }
+    
+    # DEBUG: Show if preferences changed
+    preferences_changed = st.session_state.last_user_preferences != current_preferences
+    if preferences_changed:
+        st.info("📝 Preferences changed - generating new recommendations")
+    
+    if st.button("🎯 Get Recommendations", use_container_width=True, type="primary", key="get_recommendations_btn"):
+        if master is None:
+            st.error("❌ Dataset not available.")
+        else:
+            user_input = current_preferences
+
+            # FEATURE 2: CACHE IN SESSION STATE - THIS PERSISTS NOW
+            st.session_state.cached_user_input = user_input
+            st.session_state.last_user_preferences = user_input
+            st.switch_to_page("Recommendations")
 
 def recommendations_page():
     """Recommendations page - this is fully implemented in the main code"""
