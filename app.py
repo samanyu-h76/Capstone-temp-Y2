@@ -302,6 +302,91 @@ def initialize_pexels():
 
 initialize_pexels()
 
+# =========================
+# PEXELS API FUNCTIONS
+# =========================
+def get_city_image_pexels(city_name):
+    """Fetch a high-quality image from Pexels API for a given city"""
+    try:
+        api_key = st.secrets.get("PEXELS_API_KEY")
+        if not api_key:
+            print(f"[v0] PEXELS_API_KEY not found in secrets")
+            return None
+        
+        headers = {"Authorization": api_key}
+        params = {
+            "query": f"{city_name} travel tourism landscape",
+            "per_page": 1,
+            "size": "medium"
+        }
+        
+        print(f"[v0] Fetching Pexels image for: {city_name}")
+        response = requests.get("https://api.pexels.com/v1/search", headers=headers, params=params, timeout=10)
+        print(f"[v0] Pexels response status: {response.status_code}")
+        
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("photos") and len(data["photos"]) > 0:
+                image_url = data["photos"][0]["src"]["medium"]
+                print(f"[v0] Successfully fetched Pexels image: {image_url}")
+                return image_url
+            else:
+                print(f"[v0] No photos found for {city_name}")
+                return None
+        else:
+            print(f"[v0] Pexels API error: {response.status_code} - {response.text}")
+            return None
+    except Exception as e:
+        print(f"[v0] Error fetching Pexels image for {city_name}: {str(e)}")
+        return None
+
+def get_city_video_pexels(city_name):
+    """Fetch a high-quality video from Pexels API for a given city"""
+    try:
+        api_key = st.secrets.get("PEXELS_API_KEY")
+        if not api_key:
+            print(f"[v0] PEXELS_API_KEY not found in secrets")
+            return None
+        
+        headers = {"Authorization": api_key}
+        params = {
+            "query": f"{city_name} travel tourism",
+            "per_page": 1,
+            "size": "medium"
+        }
+        
+        print(f"[v0] Fetching Pexels video for: {city_name}")
+        response = requests.get("https://api.pexels.com/videos/search", headers=headers, params=params, timeout=10)
+        print(f"[v0] Pexels video response status: {response.status_code}")
+        
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("videos") and len(data["videos"]) > 0:
+                # Get the video files
+                video_files = data["videos"][0].get("video_files", [])
+                if not video_files:
+                    print(f"[v0] No video files found for {city_name}")
+                    return None
+                
+                # Prefer HD quality
+                for vf in video_files:
+                    if vf.get("quality") == "hd":
+                        print(f"[v0] Found HD video: {vf['link']}")
+                        return vf["link"]
+                
+                # Fallback to first available video
+                print(f"[v0] Using fallback video quality")
+                return video_files[0]["link"]
+            else:
+                print(f"[v0] No videos found for {city_name}")
+                return None
+        else:
+            print(f"[v0] Pexels video API error: {response.status_code} - {response.text}")
+            return None
+    except Exception as e:
+        print(f"[v0] Error fetching Pexels video for {city_name}: {str(e)}")
+        return None
+
 # NOTE: V2 dataset already loaded at line 205 via load_datasets()
 # DO NOT load old dataset - it would override the v2 data
 # The load_datasets() function at line 185 is the active data loader
@@ -1740,8 +1825,13 @@ def recommendations_page():
         
         st.markdown("### 🌟 Your Top Pick")
         with st.container(border=True):
-            # Full width image on top
-            st.image(get_city_image_pexels(top_row['city']), use_container_width=True)
+            # Full width image on top - from Pexels
+            image_url = get_city_image_pexels(top_row['city'])
+            if image_url:
+                st.write(f"DEBUG: Using Pexels image for {top_row['city']}")
+                st.image(image_url, use_container_width=True)
+            else:
+                st.warning(f"Failed to fetch Pexels image for {top_row['city']}. Check logs for details.")
             
             # Info section
             col1, col2, col3 = st.columns([2, 1, 1])
@@ -1834,7 +1924,12 @@ def recommendations_page():
                 
                 with col2:
                     # FEATURE 5: PEXELS IMAGE
-                    st.image(get_city_image_pexels(row['city']), use_container_width=True)
+                    image_url = get_city_image_pexels(row['city'])
+                    if image_url:
+                        st.write(f"DEBUG: Using Pexels image for {row['city']}")
+                        st.image(image_url, use_container_width=True)
+                    else:
+                        st.warning(f"Failed to fetch Pexels image for {row['city']}. Check logs for details.")
                 
                 st.divider()
                 
@@ -1993,7 +2088,7 @@ def itinerary_page():
         city_row = st.session_state.current_city
         user_input = st.session_state.current_user_input
         
-        st.markdown("### 📅 Your Itinerary")
+        st.markdown("### �� Your Itinerary")
         st.success("✅ Generated!")
         
         st.text_area(
@@ -2299,6 +2394,82 @@ def auth_page():
         
         with tab2:
             signup_page()
+
+# =========================
+# PAGE FUNCTIONS
+# =========================
+def home_page():
+    """Home page with overview"""
+    st.title("Welcome to AI Cultural Tourism Engine")
+    st.markdown("""
+    This platform uses AI to recommend personalized travel destinations based on your preferences.
+    
+    **Features:**
+    - Get personalized destination recommendations powered by Gemini AI
+    - Explore weather conditions and activity suggestions
+    - Generate custom day-by-day itineraries
+    - Watch destination guides (powered by Pexels)
+    - Multi-language destination descriptions
+    """)
+
+def personalization_page():
+    """Personalization page for collecting user preferences"""
+    st.title("Tell Us Your Preferences")
+    st.markdown("Help us understand your travel style to get better recommendations")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        age = st.slider("Age", 18, 80, 30)
+        gender = st.selectbox("Gender", ["Male", "Female", "Other"])
+    with col2:
+        budget = st.selectbox("Budget", ["Low", "Medium", "High", "Very High"])
+        travel_style = st.selectbox("Travel Style", ["Adventure", "Relaxation", "Cultural", "Luxury"])
+    
+    st.success("Preferences saved! Go to Recommendations to see destinations tailored for you.")
+
+def recommendations_page():
+    """Recommendations page - this is fully implemented in the main code"""
+    pass  # This function is defined inline in the main app flow
+
+def itinerary_page():
+    """Itinerary planning page"""
+    st.title("Generate Your Itinerary")
+    st.markdown("Create a day-by-day plan for your next trip")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        city = st.text_input("Select a city")
+        duration = st.slider("Trip duration (days)", 1, 30, 5)
+    with col2:
+        interests = st.multiselect("Interests", ["Museums", "Nature", "Food", "Shopping", "Adventure"])
+    
+    if st.button("Generate Itinerary"):
+        if city:
+            st.info("Itinerary generation feature coming soon!")
+
+def video_page():
+    """Video guide page with Pexels videos"""
+    st.title("Destination Video Guides")
+    st.markdown("Watch travel guides for your favorite destinations (powered by Pexels)")
+    
+    city = st.text_input("Enter a city name to see video guides:")
+    
+    if city:
+        with st.spinner(f"Fetching video for {city}..."):
+            video_url = get_city_video_pexels(city)
+            
+            if video_url:
+                st.video(video_url)
+                st.caption(f"Video guide for {city} - Powered by Pexels")
+            else:
+                st.warning(f"No video available for {city}. Try another destination!")
+
+def chatbot_page():
+    """Chatbot for travel questions"""
+    st.title("Travel Assistant Chatbot")
+    st.markdown("Ask me anything about your travel plans!")
+    
+    st.info("Chatbot feature coming soon! For now, use our recommendations and itinerary features.")
 
 # =========================
 # NAVIGATION
