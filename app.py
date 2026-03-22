@@ -1023,8 +1023,34 @@ WRITE EVERYTHING IN FULL DETAIL. INCLUDE ALL {duration} DAYS COMPLETELY."""
 # =========================
 
 def generate_video_caption(section_text, day_num, time_period):
-    """Use Gemini to generate a short video subtitle for one itinerary section"""
-    fallback = f"Day {day_num} • {time_period} activity"
+    """Use Gemini to generate a short natural subtitle for one itinerary section"""
+    fallback = f"Explore the highlights of the {time_period.lower()}"
+
+    def clean_caption(text):
+        if not text:
+            return fallback
+
+        text = text.strip().replace("\n", " ")
+        text = text.replace('"', '').replace("'", "")
+        text = re.sub(r'\s+', ' ', text).strip()
+
+        # remove labels if Gemini adds them
+        text = re.sub(r'^(caption|subtitle|summary)\s*:\s*', '', text, flags=re.IGNORECASE)
+
+        # strip bullets / numbering
+        text = re.sub(r'^[\-\*\d\.\)\s]+', '', text).strip()
+
+        # keep caption readable but not too long
+        if len(text) > 70:
+            cut = text[:67].rstrip()
+            if " " in cut:
+                cut = cut.rsplit(" ", 1)[0]
+            text = cut + "..."
+
+        if len(text) < 12:
+            return fallback
+
+        return text
 
     if not GEMINI_AVAILABLE:
         return fallback
@@ -1033,52 +1059,42 @@ def generate_video_caption(section_text, day_num, time_period):
         model = genai.GenerativeModel("gemini-2.5-flash")
 
         prompt = f"""
-You are creating subtitles for a travel recap video.
+You are creating a subtitle for a travel recap video.
 
-TASK:
-Summarize this itinerary section into ONE short cinematic subtitle.
+Task:
+Write one short, natural caption that summarizes this itinerary section.
 
-RULES:
-- Maximum 8 words
-- Do NOT copy the itinerary wording directly
-- Make it sound like a recap caption
+Rules:
+- Write exactly one sentence
+- Make it feel like a travel recap subtitle
+- Summarize the experience, do not copy the itinerary text directly
+- Keep it between 8 and 16 words
 - No hashtags
-- No quotation marks
 - No emojis
-- No full stop at the end
-- Keep it natural and travel-video style
+- No quotation marks
+- No labels like "Caption:"
+- No bullet points
 
-OUTPUT:
-Return only the subtitle text.
+Return only the caption sentence.
 
-DAY: {day_num}
-TIME PERIOD: {time_period}
+Day: {day_num}
+Time period: {time_period}
 
-ITINERARY SECTION:
+Itinerary section:
 {section_text}
 """
 
         response = model.generate_content(
             prompt,
             generation_config=genai.types.GenerationConfig(
-                temperature=0.6,
-                max_output_tokens=30,
+                temperature=0.7,
+                max_output_tokens=60,
             )
         )
 
         if response and response.text:
-            caption = response.text.strip().replace("\n", " ").strip()
-            caption = caption.replace('"', '').replace("'", "")
-
-            # hard safety cap
-            words = caption.split()
-            if len(words) > 8:
-                caption = " ".join(words[:8])
-
-            if len(caption) > 55:
-                caption = caption[:52].rstrip() + "..."
-
-            return caption if caption else fallback
+            caption = clean_caption(response.text)
+            return caption
 
         return fallback
 
@@ -1312,11 +1328,15 @@ def generate_itinerary_video(itinerary_text, city, country, user_input):
 
                     subtitle_text = location.get("caption", "").strip()
                     if not subtitle_text:
-                        subtitle_text = f"Day {day_data['day_num']} recap"
+                        subtitle_text = f"Exploring the best of Day {day_data['day_num']}"
+                    
+                    subtitle_text = re.sub(r'\s+', ' ', subtitle_text).strip()
 
-                    # Keep subtitle concise enough to render cleanly
-                    if len(subtitle_text) > 80:
-                        subtitle_text = subtitle_text[:77] + "..."
+if len(subtitle_text) > 70:
+    cut = subtitle_text[:67].rstrip()
+    if " " in cut:
+        cut = cut.rsplit(" ", 1)[0]
+    subtitle_text = cut + "..."
 
                     try:
                         subtitle_bg = (
@@ -1329,10 +1349,10 @@ def generate_itinerary_video(itinerary_text, city, country, user_input):
                         subtitle = (
                             TextClip(
                                 text=subtitle_text,
-                                font_size=28,
+                                font_size=24,
                                 color="white",
                                 method="caption",
-                                size=(video_width - 60, subtitle_bar_height - 20)
+                                size=(video_width - 100, subtitle_bar_height - 24)
                             )
                             .with_duration(clip_duration)
                             .with_position(("center", video_height - subtitle_bar_height + 12))
