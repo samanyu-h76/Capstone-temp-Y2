@@ -1106,7 +1106,7 @@ def fetch_pexels_image(query, filename, page=1):
         headers = {"Authorization": pexels_key}
         params = {
             "query": query,
-            "per_page": 5,
+            "per_page": 3,
             "page": page,
             "orientation": "landscape"
         }
@@ -1115,7 +1115,7 @@ def fetch_pexels_image(query, filename, page=1):
             "https://api.pexels.com/v1/search",
             headers=headers,
             params=params,
-            timeout=20
+            timeout=10
         )
 
         if response.status_code != 200:
@@ -1126,13 +1126,12 @@ def fetch_pexels_image(query, filename, page=1):
         if not photos:
             return None
 
-        photo = random.choice(photos[:min(3, len(photos))])
-        image_url = photo["src"].get("large") or photo["src"].get("landscape")
-
+        photo = photos[0]
+        image_url = photo["src"].get("medium") or photo["src"].get("large") or photo["src"].get("landscape")
         if not image_url:
             return None
 
-        img_response = requests.get(image_url, timeout=20)
+        img_response = requests.get(image_url, timeout=10)
         if img_response.status_code != 200:
             return None
 
@@ -1175,12 +1174,13 @@ def get_city_image_pexels(city, width=800, height=500):
         return get_city_image(city)
 
 def generate_itinerary_video(itinerary_text, city, country, user_input):
-    """Generate travel video using itinerary + Pexels images"""
+    """Generate travel video using itinerary + Pexels images for ALL itinerary days"""
     if not PEXELS_AVAILABLE:
         st.error("Pexels API not configured.")
         return None
 
     temp_dir = None
+    final_video = None
 
     try:
         days_data = parse_itinerary_into_days(itinerary_text)
@@ -1194,54 +1194,44 @@ def generate_itinerary_video(itinerary_text, city, country, user_input):
 
         day_clips = []
         progress_bar = st.progress(0)
+        status_text = st.empty()
+
+        video_width = 960
+        video_height = 540
+        clip_duration = 1.2
 
         for day_idx, day_data in enumerate(days_data):
+            status_text.write(f"Processing Day {day_data['day_num']} of {len(days_data)}...")
+
             locations = day_data.get("locations", [])
             image_clips = []
 
+            if not locations:
+                locations = [{
+                    "location": f"{city} travel",
+                    "time_period": "All Day"
+                }]
+
             for loc_idx, location in enumerate(locations):
-                search_query = f"{location['location']} {city} travel"
+                search_query = f"{location.get('location', city)} {city} travel"
                 image_file = os.path.join(
                     temp_dir,
                     f"day_{day_data['day_num']}_loc_{loc_idx}.jpg"
                 )
 
-                success = False
-                for page in range(1, 3):
-                    if fetch_pexels_image(search_query, image_file, page=page):
-                        success = True
-                        break
+                success = fetch_pexels_image(search_query, image_file, page=1)
 
                 if not success:
-                    placeholder = PILImage.new("RGB", (1280, 720), color=(70, 130, 180))
+                    placeholder = PILImage.new("RGB", (video_width, video_height), color=(70, 130, 180))
                     placeholder.save(image_file)
 
                 try:
                     img = PILImage.open(image_file).convert("RGB")
-                    img = img.resize((1280, 720))
+                    img = img.resize((video_width, video_height))
                     frame = np.array(img)
 
-                    base_clip = ImageClip(frame).with_duration(2)
-
-                    caption_text = location.get(
-                        "caption",
-                        f"{location.get('time_period', 'Stop')}: {location.get('location', city)}"
-                    )
-
-                    try:
-                        caption = TextClip(
-                            caption_text,
-                            fontsize=24,
-                            color="white",
-                            method="caption",
-                            size=(1000, None)
-                        ).with_duration(2).with_position(("center", 620))
-
-                        composed = CompositeVideoClip([base_clip, caption], size=(1280, 720))
-                    except Exception:
-                        composed = base_clip
-
-                    image_clips.append(composed)
+                    clip = ImageClip(frame).with_duration(clip_duration)
+                    image_clips.append(clip)
 
                 except Exception as clip_error:
                     st.warning(f"Skipping one image clip: {clip_error}")
@@ -1251,24 +1241,12 @@ def generate_itinerary_video(itinerary_text, city, country, user_input):
                 st.warning(f"No usable clips created for Day {day_data['day_num']}")
                 continue
 
-            day_body = concatenate_videoclips(image_clips, method="compose")
-
             try:
-                day_header_text = TextClip(
-                    f"Day {day_data['day_num']} - {day_data['day_title']}",
-                    fontsize=42,
-                    color="yellow",
-                    method="caption",
-                    size=(1100, None)
-                ).with_duration(2).with_position(("center", "center"))
-
-                day_header_bg = ColorClip(size=(1280, 720), color=(0, 0, 0)).with_duration(2)
-                day_header_video = CompositeVideoClip([day_header_bg, day_header_text], size=(1280, 720))
-            except Exception:
-                day_header_video = ColorClip(size=(1280, 720), color=(0, 0, 0)).with_duration(1)
-
-            full_day_clip = concatenate_videoclips([day_header_video, day_body], method="compose")
-            day_clips.append(full_day_clip)
+                day_video = concatenate_videoclips(image_clips, method="compose")
+                day_clips.append(day_video)
+            except Exception as day_error:
+                st.warning(f"Could not build Day {day_data['day_num']}: {day_error}")
+                continue
 
             progress_bar.progress((day_idx + 1) / len(days_data))
 
@@ -1276,32 +1254,20 @@ def generate_itinerary_video(itinerary_text, city, country, user_input):
             st.error("No valid day clips were created.")
             return None
 
+        status_text.write("Merging all day clips...")
         final_video = concatenate_videoclips(day_clips, method="compose")
 
-        try:
-            title_text = TextClip(
-                f"Your {city}, {country} Adventure",
-                fontsize=50,
-                color="white",
-                method="caption",
-                size=(1100, None)
-            ).with_duration(3).with_position(("center", "center"))
-
-            title_bg = ColorClip(size=(1280, 720), color=(25, 25, 112)).with_duration(3)
-            title_slide = CompositeVideoClip([title_bg, title_text], size=(1280, 720))
-        except Exception:
-            title_slide = ColorClip(size=(1280, 720), color=(25, 25, 112)).with_duration(2)
-
-        final_video = concatenate_videoclips([title_slide, final_video], method="compose")
-
         output_path = os.path.join(temp_dir, "output.mp4")
+        status_text.write("Rendering MP4 file...")
+
         final_video.write_videofile(
             output_path,
-            fps=24,
+            fps=12,
             codec="libx264",
             audio=False,
-            preset="medium",
-            threads=2
+            preset="ultrafast",
+            threads=1,
+            logger=None
         )
 
         output_buffer = BytesIO()
@@ -1309,6 +1275,7 @@ def generate_itinerary_video(itinerary_text, city, country, user_input):
             output_buffer.write(f.read())
         output_buffer.seek(0)
 
+        status_text.write("Video generated successfully!")
         st.success("Video generated successfully!")
         return output_buffer
 
@@ -1317,6 +1284,12 @@ def generate_itinerary_video(itinerary_text, city, country, user_input):
         return None
 
     finally:
+        try:
+            if final_video is not None:
+                final_video.close()
+        except:
+            pass
+
         if temp_dir and os.path.exists(temp_dir):
             try:
                 import shutil
