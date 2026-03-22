@@ -18,7 +18,7 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
 from io import BytesIO
 import requests
 from PIL import Image as PILImage
-from moviepy.editor import (
+from moviepy import (
     ImageClip,
     TextClip,
     CompositeVideoClip,
