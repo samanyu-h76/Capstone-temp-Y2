@@ -72,16 +72,16 @@ def initialize_session_state():
     
     # FEATURE 2: PERSONALIZATION CACHE - PERSISTENT DATA
     if 'cached_user_input' not in st.session_state:
-        st.session_state.cached_user_input = {
-            'age': 30,
-            'interest': 'Culture',
-            'duration': 5,
-            'weather': 'Pleasant',
-            'season': 'Summer',
-            'budget': 'Mid-range',
-            'continent': 'All Continents',
-            'country': 'All Countries'
-        }
+            st.session_state.cached_user_input = {
+                'age': 30,
+                'interest': 'Adventure',
+                'duration': 5,
+                'weather': 'Pleasant',
+                'season': 'Summer',
+                'budget': 'Mid-range',
+                'continent': 'All Continents',
+                'country': 'All Countries'
+            }
     
     # Itinerary preferences (moved from personalization)
     if 'itinerary_preferences' not in st.session_state:
@@ -2064,8 +2064,8 @@ def personalization_page():
         # FEATURE 1: CUISINE OPTION
         interest = st.selectbox(
             "Primary Interest",
-            ["Culture", "Adventure", "Nature", "Beach", "Cuisine"],
-            index=["Culture", "Adventure", "Nature", "Beach", "Cuisine"].index(cached_data['interest'])
+            ["Culture", "Adventure", "Nature", "Beach", "Cuisine", "Wellness", "Seclusion", "Nightlife", "Urban"],
+            index=["Culture", "Adventure", "Nature", "Beach", "Cuisine", "Wellness", "Seclusion", "Nightlife", "Urban"].index(cached_data['interest']) if cached_data['interest'] in ["Culture", "Adventure", "Nature", "Beach", "Cuisine", "Wellness", "Seclusion", "Nightlife", "Urban"] else 0
         )
         
         trip_duration = st.slider(
