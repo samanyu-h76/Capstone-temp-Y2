@@ -1914,6 +1914,24 @@ def generate_itinerary_pdf(city, country, weather, season, itinerary_text, city_
         except:
             pass
         
+        # ADD FEEDBACK LINK AT END OF PDF
+        content.append(Spacer(1, 0.3*inch))
+        content.append(Paragraph("━" * 80, info_style))
+        content.append(Spacer(1, 0.15*inch))
+        
+        feedback_link_text = """
+        <b>Share Your Feedback 📝</b><br/><br/>
+        We'd love to hear your thoughts about this itinerary!<br/>
+        Visit our feedback page to rate this itinerary and share your comments.<br/><br/>
+        <u>Itinerary ID: {}</u><br/>
+        Use this ID to access and rate this specific itinerary on our platform.
+        """.format(st.session_state.current_itinerary_id if st.session_state.current_itinerary_id else "N/A")
+        
+        try:
+            content.append(Paragraph(feedback_link_text, normal_style))
+        except:
+            pass
+        
         try:
             doc.build(content)
             pdf_buffer.seek(0)
