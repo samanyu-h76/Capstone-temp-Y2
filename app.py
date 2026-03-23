@@ -2391,6 +2391,12 @@ def itinerary_page():
     st.title("📅 Itinerary Generator")
     st.markdown("---")
     
+    # Initialize session state for loaded itinerary
+    if 'loaded_itinerary_data' not in st.session_state:
+        st.session_state.loaded_itinerary_data = None
+    if 'loaded_itinerary_id' not in st.session_state:
+        st.session_state.loaded_itinerary_id = None
+    
     # =========================
     # RATE EXISTING ITINERARY BY ID (Always Available)
     # =========================
@@ -2419,67 +2425,74 @@ def itinerary_page():
                 itinerary_doc = db.collection("itineraries").document(itinerary_id_input).get()
                 
                 if itinerary_doc.exists:
-                    loaded_itinerary = itinerary_doc.to_dict()
-                    
-                    # Display the loaded itinerary
-                    st.success(f"Itinerary loaded: {loaded_itinerary.get('city', 'Unknown')}")
-                    
-                    st.markdown("---")
-                    st.markdown("### Loaded Itinerary Preview")
-                    
-                    # Show basic info
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.write(f"**City:** {loaded_itinerary.get('city', 'N/A')}")
-                        st.write(f"**Country:** {loaded_itinerary.get('country', 'N/A')}")
-                    with col2:
-                        created_date = loaded_itinerary.get('created_at', 'Unknown')
-                        st.write(f"**Created:** {created_date}")
-                    
-                    # Show itinerary text
-                    with st.expander("View Full Itinerary"):
-                        st.write(loaded_itinerary.get('itinerary_text', 'No itinerary text available'))
-                    
-                    st.markdown("---")
-                    st.markdown("### Rate This Itinerary")
-                    
-                    # Rating input for loaded itinerary
-                    loaded_rating = st.slider(
-                        "How would you rate this itinerary?",
-                        min_value=1,
-                        max_value=5,
-                        value=3,
-                        key="loaded_itinerary_rating_slider"
-                    )
-                    
-                    loaded_feedback_text = st.text_area(
-                        "Additional comments (optional):",
-                        placeholder="Share your thoughts about this itinerary...",
-                        height=100,
-                        key="loaded_itinerary_feedback_text"
-                    )
-                    
-                    if st.button("Submit Feedback for This Itinerary", type="secondary", use_container_width=True, key="submit_loaded_itinerary_feedback_btn"):
-                        success = save_feedback_to_firebase(
-                            module="itinerary",
-                            feedback_type="rating",
-                            target=f"{loaded_itinerary.get('city', 'Unknown')}, {loaded_itinerary.get('country', 'Unknown')}",
-                            value=loaded_rating,
-                            metadata={
-                                "text": loaded_feedback_text,
-                                "itinerary_id": itinerary_id_input,
-                                "feedback_source": "existing_itinerary"
-                            }
-                        )
-                        if success:
-                            st.success("Thank you for your feedback on this itinerary!")
-                        else:
-                            st.warning("Could not save feedback. Please ensure you are logged in.")
+                    # Store in session state for persistence
+                    st.session_state.loaded_itinerary_data = itinerary_doc.to_dict()
+                    st.session_state.loaded_itinerary_id = itinerary_id_input
+                    st.success(f"Itinerary loaded: {st.session_state.loaded_itinerary_data.get('city', 'Unknown')}")
+                    st.rerun()
                 else:
                     st.error("Itinerary not found. Please check the ID and try again.")
             except Exception as e:
                 st.error(f"Error loading itinerary: {str(e)}")
                 print(f"Firestore lookup error: {str(e)}")
+    
+    # Display loaded itinerary if it exists in session state
+    if st.session_state.loaded_itinerary_data is not None:
+        loaded_itinerary = st.session_state.loaded_itinerary_data
+        
+        st.markdown("---")
+        st.markdown("### Loaded Itinerary Preview")
+        
+        # Show basic info
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write(f"**City:** {loaded_itinerary.get('city', 'N/A')}")
+            st.write(f"**Country:** {loaded_itinerary.get('country', 'N/A')}")
+        with col2:
+            created_date = loaded_itinerary.get('created_at', 'Unknown')
+            st.write(f"**Created:** {created_date}")
+        
+        # Show itinerary text
+        with st.expander("View Full Itinerary"):
+            st.write(loaded_itinerary.get('itinerary_text', 'No itinerary text available'))
+        
+        st.markdown("---")
+        st.markdown("### Rate This Itinerary")
+        
+        # Rating input for loaded itinerary
+        loaded_rating = st.slider(
+            "How would you rate this itinerary?",
+            min_value=1,
+            max_value=5,
+            value=3,
+            key="loaded_itinerary_rating_slider"
+        )
+        
+        loaded_feedback_text = st.text_area(
+            "Additional comments (optional):",
+            placeholder="Share your thoughts about this itinerary...",
+            height=100,
+            key="loaded_itinerary_feedback_text"
+        )
+        
+        if st.button("Submit Feedback for This Itinerary", type="secondary", use_container_width=True, key="submit_loaded_itinerary_feedback_btn"):
+            success = save_feedback_to_firebase(
+                module="itinerary",
+                feedback_type="rating",
+                target=f"{loaded_itinerary.get('city', 'Unknown')}, {loaded_itinerary.get('country', 'Unknown')}",
+                value=loaded_rating,
+                metadata={
+                    "text": loaded_feedback_text,
+                    "itinerary_id": st.session_state.loaded_itinerary_id,
+                    "feedback_source": "existing_itinerary"
+                }
+            )
+            if success:
+                st.success("Thank you for your feedback on this itinerary!")
+                st.session_state.loaded_itinerary_data = None
+                st.session_state.loaded_itinerary_id = None
+            else:
+                st.warning("Could not save feedback. Please ensure you are logged in.")
     
     st.markdown("---")
     st.markdown("### Create New Itinerary")
