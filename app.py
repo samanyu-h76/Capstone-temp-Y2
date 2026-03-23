@@ -119,6 +119,9 @@ def initialize_session_state():
     if 'current_itinerary' not in st.session_state:
         st.session_state.current_itinerary = None
     
+    if 'current_itinerary_id' not in st.session_state:
+        st.session_state.current_itinerary_id = None
+    
     if 'current_city' not in st.session_state:
         st.session_state.current_city = None
     
@@ -235,9 +238,6 @@ def initialize_firebase_auth():
         FIREBASE_API_KEY = st.secrets.get("FIREBASE_API_KEY", None)
         FIREBASE_PROJECT_ID = st.secrets.get("FIREBASE_PROJECT_ID", None)
 
-        st.write("DEBUG API KEY:", FIREBASE_API_KEY)
-        st.write("DEBUG PROJECT ID:", FIREBASE_PROJECT_ID)
-
         # ✅ CHECK ACTUAL VALUES (not key existence)
         if FIREBASE_API_KEY and len(FIREBASE_API_KEY) > 10:
             if FIREBASE_PROJECT_ID and len(FIREBASE_PROJECT_ID) > 3:
@@ -329,11 +329,7 @@ def save_feedback_to_firebase(module, feedback_type, target, value, metadata=Non
         
         user_id = st.session_state.get("user_id")
 
-        # DEBUG LINE
-        print("DEBUG USER_ID:", user_id)
-
         if not user_id or user_id == "":
-            st.error("❌ DEBUG: user_id missing. Feedback NOT saved.")
             print("ERROR: user_id missing in session_state")
             return False
 
@@ -549,12 +545,8 @@ def clean_text_for_pdf(text):
 def sign_up(email, password, name):
     """Sign up a new user with Firebase REST API"""
     try:
-        print(f"[v0] DEBUG: Sign up attempt for {email}")
-        print(f"[v0] DEBUG: FIREBASE_AUTH_AVAILABLE={FIREBASE_AUTH_AVAILABLE}, FIREBASE_API_KEY set={bool(FIREBASE_API_KEY)}")
-        
         if not FIREBASE_AUTH_AVAILABLE or not FIREBASE_API_KEY:
             msg = "Firebase not configured. Add FIREBASE_API_KEY to .streamlit/secrets.toml"
-            print(f"[v0] DEBUG: {msg}")
             return False, msg
         
         # Firebase REST API endpoint for sign up
@@ -566,22 +558,13 @@ def sign_up(email, password, name):
             "returnSecureToken": True
         }
         
-        print(f"[v0] DEBUG: Calling Firebase signup endpoint")
         response = requests.post(url, json=payload, timeout=10)
-        print(f"[v0] DEBUG: Firebase response status: {response.status_code}")
-        
-        # Show debug info on UI
-        st.write("DEBUG STATUS:", response.status_code)
-        st.write("DEBUG TEXT:", response.text)
         
         # Try to parse JSON response
         try:
             data = response.json()
         except:
-            st.error(f"Non-JSON response: {response.text}")
             return False, f"Non-JSON response: {response.text}"
-        
-        print(f"[v0] DEBUG: Firebase response: {data}")
         
         if response.status_code == 200:
             user_id = data['localId']
@@ -1164,158 +1147,216 @@ WRITE EVERYTHING IN FULL DETAIL. INCLUDE ALL {duration} DAYS COMPLETELY."""
 # =========================
 
 def generate_video_caption(section_text, day_num, time_period):
-    """Use Gemini to generate a short natural subtitle for one itinerary section"""
-    fallback = f"Explore the highlights of the {time_period.lower()}"
+    """
+    Improved version:
+    - Much stronger instructions against truncation
+    - Forces complete sentence
+    - Better length guidance (aiming ~18–35 words)
+    - Stronger cleaning logic
+    """
+    fallback = f"On day {day_num} we enjoyed beautiful moments in {time_period.lower()}."
 
     def clean_caption(text):
         if not text:
             return fallback
 
-        text = text.strip().replace("\n", " ")
-        text = text.replace('"', '').replace("'", "")
+        text = text.strip()
+
+        # Remove unwanted prefixes that Gemini sometimes adds anyway
+        text = re.sub(r'^(caption|subtitle|summary|voiceover|text|day\s*\d+|\w+\s*:)\s*[:\-]?\s*', '', text, flags=re.IGNORECASE)
+
+        # Remove markdown, quotes, hashtags, emojis
+        text = re.sub(r'[\*\#\"\'\“\”‘’„‟«»]|[\U0001F000-\U0001FFFF]', '', text)
+
+        # Normalize whitespace
         text = re.sub(r'\s+', ' ', text).strip()
 
-        # remove labels if Gemini adds them
-        text = re.sub(r'^(caption|subtitle|summary)\s*:\s*', '', text, flags=re.IGNORECASE)
+        # Force it to end with punctuation if missing
+        if text and text[-1] not in '.!?':
+            text += "."
 
-        # strip bullets / numbering
-        text = re.sub(r'^[\-\*\d\.\)\s]+', '', text).strip()
+        # Hard truncate only as last resort — aim for readable length
+        if len(text) > 140:
+            sentences = re.split(r'(?<=[.!?])\s+', text)
+            result = ""
+            for sent in sentences:
+                if len(result) + len(sent) + 2 <= 140:
+                    result += sent + " "
+                else:
+                    break
+            text = result.strip()
+            if text.endswith(('.', '!', '?')):
+                pass
+            else:
+                text = text.rsplit(' ', 1)[0] + "…"
 
-        # keep caption readable but not too long
-        if len(text) > 70:
-            cut = text[:67].rstrip()
-            if " " in cut:
-                cut = cut.rsplit(" ", 1)[0]
-            text = cut + "..."
-
-        if len(text) < 12:
+        if len(text.strip(' .,!?')) < 10:
             return fallback
 
-        return text
+        return text.strip()
 
     if not GEMINI_AVAILABLE:
         return fallback
 
     try:
-        model = genai.GenerativeModel("gemini-2.5-flash")
+        model = genai.GenerativeModel("gemini-1.5-flash")   # ← prefer flash for speed
 
-        prompt = f"""
-You are creating a subtitle for a travel recap video.
+        trimmed = section_text.strip()[:900]  # increased a bit — still safe
 
-Task:
-Write one short, natural caption that summarizes this itinerary section.
+        prompt = f"""You are creating a **single, beautiful subtitle line** for a travel video slideshow.
 
-Rules:
-- Write exactly one sentence
-- Make it feel like a travel recap subtitle
-- Summarize the experience, do not copy the itinerary text directly
-- Keep it between 8 and 16 words
-- No hashtags
-- No emojis
-- No quotation marks
-- No labels like "Caption:"
-- No bullet points
+Context:
+- Day {day_num}
+- Time of day: {time_period}
+- Activity description: {trimmed}
 
-Return only the caption sentence.
+Rules — you MUST follow ALL of them:
+1. Write **exactly one complete sentence**
+2. The sentence must be **grammatically complete** — never cut off mid-sentence
+3. Length: 18–38 words (sweet spot ~24–30)
+4. Style: warm, cinematic, engaging, like a high-quality travel vlog voice-over
+5. Do NOT start with: Day, Morning, Afternoon, Evening, Lunch, We, In, At, On
+6. Do NOT include: hashtags, emojis, quotes, bullet points, numbering
+7. Do NOT write any prefix like "Caption:", "Subtitle:", "Text:"
+8. Return **ONLY the sentence itself** — nothing else
 
-Day: {day_num}
-Time period: {time_period}
-
-Itinerary section:
-{section_text}
-"""
+Write the subtitle now:"""
 
         response = model.generate_content(
             prompt,
             generation_config=genai.types.GenerationConfig(
-                temperature=0.7,
-                max_output_tokens=60,
+                temperature=0.68,
+                top_p=0.92,
+                top_k=40,
+                max_output_tokens=140,
             )
         )
 
         if response and response.text:
-            caption = clean_caption(response.text)
+            caption = clean_caption(response.text.strip())
             return caption
 
         return fallback
 
-    except Exception:
+    except Exception as e:
+        print("Subtitle generation failed:", str(e))
         return fallback
         
 def parse_itinerary_into_days(itinerary_text):
-    """Parse itinerary text into day-wise video data with AI-generated captions"""
+    """
+    More robust parsing:
+    - Better handling of different Gemini formatting styles
+    - Creates at least one caption per day even if sections are missing
+    - Smarter period extraction
+    """
     days_data = []
 
-    day_pattern = r'\*\*Day\s+(\d+)\s*-\s*([^*]+)\*\*'
-    day_matches = list(re.finditer(day_pattern, itinerary_text))
+    # Try multiple patterns to catch different Gemini outputs
+    patterns = [
+        r'\*\*Day\s+(\d+)\s*-\s*([^*]+?)\*\*',
+        r'Day\s+(\d+)\s*-\s*([^\n:]+)',
+        r'Day\s+(\d+)(?::|\s*-|\s+)[\s\n]*([^\n]+)',
+    ]
 
-    if not day_matches:
-        alt_pattern = r'Day\s+(\d+)\s*-\s*(.+)'
-        alt_matches = list(re.finditer(alt_pattern, itinerary_text))
-        if not alt_matches:
-            return []
-        day_matches = alt_matches
+    day_blocks = []
+    for pattern in patterns:
+        matches = list(re.finditer(pattern, itinerary_text, re.IGNORECASE))
+        if len(matches) >= 1:
+            day_blocks = matches
+            break
 
-    video_periods = ['Morning:', 'Lunch:', 'Afternoon:', 'Evening:']
+    if not day_blocks:
+        # Fallback: treat whole text as one big day
+        caption = generate_video_caption(itinerary_text[:1200], "1", "Complete Journey")
+        days_data.append({
+            "day_num": "1",
+            "day_title": "Your Journey",
+            "locations": [{
+                "time_period": "Full Trip",
+                "location": "Highlights",
+                "caption": caption,
+                "description": itinerary_text.strip()
+            }]
+        })
+        return days_data
 
-    def clean_text(text):
-        text = re.sub(r'\s+', ' ', text).strip()
-        text = text.replace('*', '').replace('#', '')
-        return text
+    video_periods = ['Morning:', 'Lunch:', 'Afternoon:', 'Evening:', 'Dinner:']
 
-    def extract_location_name(content, fallback):
-        content = clean_text(content)
-        first_sentence = content.split('.')[0].strip() if '.' in content else content
-        first_sentence = re.sub(r'\([^)]*\)', '', first_sentence).strip()
-
-        words = first_sentence.split()
-        if len(words) >= 4:
-            return " ".join(words[:4]).strip()
-        elif first_sentence:
-            return first_sentence[:40].strip()
-        else:
-            return fallback
-
-    for i, match in enumerate(day_matches):
+    for i, match in enumerate(day_blocks):
         day_num = match.group(1)
-        day_title = match.group(2).strip()
+        day_title = (match.group(2) or f"Day {day_num}").strip()
 
         start = match.end()
-        end = day_matches[i + 1].start() if i + 1 < len(day_matches) else len(itinerary_text)
+        end = day_blocks[i + 1].start() if i + 1 < len(day_blocks) else len(itinerary_text)
         day_content = itinerary_text[start:end].strip()
+
+        if not day_content:
+            caption = generate_video_caption(day_title, day_num, "Full Day")
+            days_data.append({
+                "day_num": day_num,
+                "day_title": day_title,
+                "locations": [{
+                    "time_period": "Full Day",
+                    "location": day_title,
+                    "caption": caption,
+                    "description": day_title
+                }]
+            })
+            continue
 
         locations = []
 
+        # Try to split into periods
+        period_positions = []
         for period in video_periods:
-            if period in day_content:
-                start_idx = day_content.find(period)
-                next_period_idx = len(day_content)
+            pos = day_content.find(period)
+            if pos != -1:
+                period_positions.append((pos, period))
 
-                for next_period in video_periods + ['Budget Tip:', 'Local Insight:', 'Tips:']:
-                    found_idx = day_content.find(next_period, start_idx + len(period))
-                    if found_idx != -1 and found_idx < next_period_idx:
-                        next_period_idx = found_idx
+        period_positions.sort(key=lambda x: x[0])
 
-                content = day_content[start_idx + len(period):next_period_idx].strip()
-
-                if content:
-                    location_name = extract_location_name(content, day_title)
-                    ai_caption = generate_video_caption(content, day_num, period.replace(':', ''))
-
-                    locations.append({
-                        "time_period": period.replace(':', ''),
-                        "location": location_name,
-                        "caption": ai_caption,
-                        "description": content
-                    })
-
-        if not locations:
-            fallback_caption = generate_video_caption(day_content or day_title, day_num, "Day Recap")
-            locations = [{
-                "time_period": "All Day",
-                "location": day_title,
-                "caption": fallback_caption,
+        if not period_positions:
+            # No clear periods → treat whole day as one slide
+            caption = generate_video_caption(day_content, day_num, "Full Day")
+            loc_name = day_title if len(day_title) < 40 else "Day Overview"
+            locations.append({
+                "time_period": "Full Day",
+                "location": loc_name,
+                "caption": caption,
                 "description": day_content
+            })
+        else:
+            for j, (start_pos, period_label) in enumerate(period_positions):
+                end_pos = period_positions[j + 1][0] if j + 1 < len(period_positions) else len(day_content)
+
+                content = day_content[start_pos + len(period_label):end_pos].strip()
+
+                if not content.strip():
+                    continue
+
+                # Try to extract a nice location name
+                loc_name = "Highlight"
+                first_line = content.split('\n', 1)[0].strip()
+                if first_line and len(first_line) < 60:
+                    loc_name = re.sub(r'^(visit|go to|head to|enjoy|experience)\s+', '', first_line, flags=re.I).strip('.,')
+
+                caption = generate_video_caption(content, day_num, period_label.rstrip(':'))
+
+                locations.append({
+                    "time_period": period_label.rstrip(':'),
+                    "location": loc_name,
+                    "caption": caption,
+                    "description": content
+                })
+
+        # Guarantee at least one slide per day
+        if not locations:
+            caption = generate_video_caption(day_content or day_title, day_num, "Day Recap")
+            locations = [{
+                "time_period": "Day Recap",
+                "location": day_title,
+                "caption": caption,
+                "description": day_content or day_title
             }]
 
         days_data.append({
@@ -1325,6 +1366,74 @@ def parse_itinerary_into_days(itinerary_text):
         })
 
     return days_data
+
+# VIDEO SUBTITLE RENDERING - PERMANENT FIX
+def render_subtitle_with_auto_wrapping(subtitle_text, video_width, video_height, clip_duration):
+    """
+    Render subtitles with automatic text wrapping and dynamic sizing.
+    Handles multi-line text without cutting off.
+    """
+    import textwrap
+    
+    # Dynamic font sizing based on text length
+    text_length = len(subtitle_text)
+    if text_length < 40:
+        font_size = 28
+    elif text_length < 80:
+        font_size = 24
+    elif text_length < 120:
+        font_size = 20
+    elif text_length < 160:
+        font_size = 18
+    else:
+        font_size = 16
+    
+    # Calculate dynamic subtitle bar height based on expected wrapping
+    # Start with minimum height
+    min_subtitle_height = 120
+    
+    # Estimate lines needed (accounting for video width constraints)
+    chars_per_line = max(40, (video_width - 100) // (font_size // 2))
+    estimated_lines = max(1, (len(subtitle_text) + chars_per_line - 1) // chars_per_line)
+    
+    # Dynamic height: add 30 pixels per expected line, plus padding
+    dynamic_height = 60 + (estimated_lines * (font_size + 10))
+    subtitle_bar_height = max(min_subtitle_height, min(dynamic_height, video_height // 3))
+    
+    try:
+        # Black background bar with proper height
+        subtitle_bg = (
+            ColorClip(size=(video_width, subtitle_bar_height), color=(0, 0, 0))
+            .with_duration(clip_duration)
+            .with_opacity(0.75)
+            .with_position((0, video_height - subtitle_bar_height))
+        )
+        
+        # Text with GENEROUS padding and no size constraint
+        subtitle = (
+            TextClip(
+                text=subtitle_text,
+                font_size=font_size,
+                color="white",
+                method="caption",
+                size=(video_width - 80, None),  # None height = auto-wrap to fit
+            )
+            .with_duration(clip_duration)
+            .with_position(("center", video_height - subtitle_bar_height + (subtitle_bar_height - font_size - 20) // 2))
+        )
+        
+        # Composite with proper dimensions
+        composite = CompositeVideoClip(
+            [subtitle_bg, subtitle],
+            size=(video_width, video_height)
+        )
+        
+        return composite
+        
+    except Exception as e:
+        print(f"Subtitle rendering error: {e}")
+        return None
+
 
 def fetch_pexels_image(query, filename, page=1):
     """Fetch image from Pexels API and save locally"""
@@ -1411,168 +1520,143 @@ def generate_itinerary_video(itinerary_text, city, country, user_input):
     if not PEXELS_AVAILABLE:
         st.error("Pexels API not configured.")
         return None
-
+ 
     temp_dir = None
     final_video = None
-
+ 
     try:
         days_data = parse_itinerary_into_days(itinerary_text)
-
+ 
         if not days_data:
             st.error("Could not parse itinerary into day-wise sections.")
             return None
-
+ 
         temp_dir = tempfile.mkdtemp()
         st.info(f"Generating video with {len(days_data)} day(s)...")
-
+ 
         day_clips = []
         progress_bar = st.progress(0)
         status_text = st.empty()
-
+ 
         video_width = 960
         video_height = 540
-        subtitle_bar_height = 90
-        clip_duration = 1.8
-
+        subtitle_bar_height = 100   # slightly taller so text has room to breathe
+        clip_duration = 3.5         # longer per clip so subtitles are readable
+ 
         for day_idx, day_data in enumerate(days_data):
             status_text.write(f"Processing Day {day_data['day_num']} of {len(days_data)}...")
-
+ 
             locations = day_data.get("locations", [])
             image_clips = []
-
+ 
             if not locations:
                 locations = [{
                     "location": f"{city} travel",
                     "time_period": "All Day",
                     "caption": f"Day {day_data['day_num']} - {day_data['day_title']}"
                 }]
-
+ 
             for loc_idx, location in enumerate(locations):
                 search_query = f"{location.get('location', city)} {city} travel"
                 image_file = os.path.join(
                     temp_dir,
                     f"day_{day_data['day_num']}_loc_{loc_idx}.jpg"
                 )
-
+ 
                 success = fetch_pexels_image(search_query, image_file, page=1)
-
+ 
                 if not success:
                     placeholder = PILImage.new("RGB", (video_width, video_height), color=(70, 130, 180))
                     placeholder.save(image_file)
-
+ 
                 try:
                     img = PILImage.open(image_file).convert("RGB")
                     img = img.resize((video_width, video_height))
                     frame = np.array(img)
-
+ 
                     base_clip = ImageClip(frame).with_duration(clip_duration)
-
+ 
+                    # --- Subtitle text: single clean pass, no duplicate truncation ---
                     subtitle_text = location.get("caption", "").strip()
                     if not subtitle_text:
-                        subtitle_text = f"Exploring the best of Day {day_data['day_num']}"
-                    
+                        subtitle_text = f"Discovering the best of {city} on Day {day_data['day_num']}"
+ 
+                    # Normalise whitespace only — caption is already well-formed from generate_video_caption
                     subtitle_text = re.sub(r'\s+', ' ', subtitle_text).strip()
-
-                    if len(subtitle_text) > 70:
-                        cut = subtitle_text[:67].rstrip()
-                        if " " in cut:
-                            cut = cut.rsplit(" ", 1)[0]
-                        subtitle_text = cut + "..."
-
-                    subtitle_text = location.get("caption", "").strip()
-                    if not subtitle_text:
-                        subtitle_text = f"Exploring the best of Day {day_data['day_num']}"
-
-                    subtitle_text = re.sub(r'\s+', ' ', subtitle_text).strip()
-                    
-                    if len(subtitle_text) > 70:
-                        cut = subtitle_text[:67].rstrip()
-                        if " " in cut:
-                            cut = cut.rsplit(" ", 1)[0]
-                        subtitle_text = cut + "..."
-                    
+ 
                     try:
-                        subtitle_bg = (
-                            ColorClip(size=(video_width, subtitle_bar_height), color=(0, 0, 0))
-                            .with_duration(clip_duration)
-                            .with_opacity(0.65)
-                            .with_position((0, video_height - subtitle_bar_height))
+                        subtitle_composite = render_subtitle_with_auto_wrapping(
+                            subtitle_text, 
+                            video_width, 
+                            video_height, 
+                            clip_duration
                         )
-
-                        subtitle = (
-                            TextClip(
-                                text=subtitle_text,
-                                font_size=24,
-                                color="white",
-                                method="caption",
-                                size=(video_width - 100, subtitle_bar_height - 24)
+    
+                        if subtitle_composite:
+                            clip = CompositeVideoClip(
+                                [base_clip, subtitle_composite],
+                                size=(video_width, video_height)
                             )
-                            .with_duration(clip_duration)
-                            .with_position(("center", video_height - subtitle_bar_height + 12))
-                        )
-
-                        clip = CompositeVideoClip(
-                            [base_clip, subtitle_bg, subtitle],
-                            size=(video_width, video_height)
-                        )
+                        else:
+                            clip = base_clip
                     except Exception:
                         clip = base_clip
-
+                        
                     image_clips.append(clip)
-
+ 
                 except Exception as clip_error:
                     st.warning(f"Skipping one image clip: {clip_error}")
                     continue
-
+ 
             if not image_clips:
                 st.warning(f"No usable clips created for Day {day_data['day_num']}")
                 continue
-
+ 
             try:
                 day_video = concatenate_videoclips(image_clips, method="compose")
             except Exception as day_error:
                 st.warning(f"Could not build Day {day_data['day_num']}: {day_error}")
                 continue
-
+ 
             # Day intro card
             try:
-                day_intro_bg = ColorClip(size=(video_width, video_height), color=(20, 20, 20)).with_duration(1.5)
-
+                day_intro_bg = ColorClip(size=(video_width, video_height), color=(20, 20, 20)).with_duration(2.0)
+ 
                 day_intro_text = (
                     TextClip(
-                        text=f"Day {day_data['day_num']} - {day_data['day_title']}",
+                        text=f"Day {day_data['day_num']}  |  {day_data['day_title']}",
                         font_size=36,
                         color="white",
                         method="caption",
                         size=(video_width - 80, None)
                     )
-                    .with_duration(1.5)
+                    .with_duration(2.0)
                     .with_position(("center", "center"))
                 )
-
+ 
                 day_intro = CompositeVideoClip(
                     [day_intro_bg, day_intro_text],
                     size=(video_width, video_height)
                 )
-
+ 
                 full_day_video = concatenate_videoclips([day_intro, day_video], method="compose")
             except Exception:
                 full_day_video = day_video
-
+ 
             day_clips.append(full_day_video)
             progress_bar.progress((day_idx + 1) / len(days_data))
-
+ 
         if not day_clips:
             st.error("No valid day clips were created.")
             return None
-
+ 
         status_text.write("Merging all day clips...")
         final_video = concatenate_videoclips(day_clips, method="compose")
-
+ 
         # Main title intro
         try:
-            title_bg = ColorClip(size=(video_width, video_height), color=(25, 25, 112)).with_duration(2)
-
+            title_bg = ColorClip(size=(video_width, video_height), color=(25, 25, 112)).with_duration(2.5)
+ 
             title_text = (
                 TextClip(
                     text=f"{city}, {country}\nTravel Recap",
@@ -1581,18 +1665,18 @@ def generate_itinerary_video(itinerary_text, city, country, user_input):
                     method="caption",
                     size=(video_width - 100, None)
                 )
-                .with_duration(2)
+                .with_duration(2.5)
                 .with_position(("center", "center"))
             )
-
+ 
             title_clip = CompositeVideoClip([title_bg, title_text], size=(video_width, video_height))
             final_video = concatenate_videoclips([title_clip, final_video], method="compose")
         except Exception:
             pass
-
+ 
         output_path = os.path.join(temp_dir, "output.mp4")
         status_text.write("Rendering MP4 file...")
-
+ 
         final_video.write_videofile(
             output_path,
             fps=12,
@@ -1602,27 +1686,27 @@ def generate_itinerary_video(itinerary_text, city, country, user_input):
             threads=1,
             logger=None
         )
-
+ 
         output_buffer = BytesIO()
         with open(output_path, "rb") as f:
             output_buffer.write(f.read())
         output_buffer.seek(0)
-
+ 
         status_text.write("Video generated successfully!")
         st.success("Video generated successfully!")
         return output_buffer
-
+ 
     except Exception as e:
         st.error(f"Video generation error: {str(e)}")
         return None
-
+ 
     finally:
         try:
             if final_video is not None:
                 final_video.close()
         except:
             pass
-
+ 
         if temp_dir and os.path.exists(temp_dir):
             try:
                 import shutil
@@ -2382,9 +2466,26 @@ def itinerary_page():
             # Clean the itinerary for PDF export (remove emojis and special chars)
             cleaned_itinerary = clean_text_for_pdf(itinerary)
             
+            # Generate unique itinerary ID and save to Firestore
+            itinerary_id = str(uuid.uuid4())
+            if FIREBASE_AVAILABLE and db:
+                try:
+                    db.collection("itineraries").document(itinerary_id).set({
+                        "user_id": st.session_state.get("user_id", "anonymous"),
+                        "city": city_row['city'],
+                        "country": city_row['country'],
+                        "itinerary_text": cleaned_itinerary,
+                        "user_preferences": full_user_input,
+                        "created_at": firestore.SERVER_TIMESTAMP,
+                        "session_id": st.session_state.get("session_id", "unknown")
+                    })
+                except Exception as e:
+                    print(f"Error saving itinerary to Firebase: {str(e)}")
+            
             st.session_state.current_itinerary = cleaned_itinerary
             st.session_state.current_city = city_row
             st.session_state.current_user_input = full_user_input
+            st.session_state.current_itinerary_id = itinerary_id
             
             # CACHE ITINERARY
             st.session_state.cached_itineraries[selected_city] = cleaned_itinerary
@@ -2420,6 +2521,10 @@ def itinerary_page():
         with col1:
             if st.button("Generate PDF", type="secondary", use_container_width=True, key="generate_pdf_btn"):
                 with st.spinner(f"Creating PDF..."):
+                    # NOTE: The generate_itinerary_pdf function should include:
+                    # - Itinerary ID in the PDF metadata
+                    # - At the end of PDF: "Share your feedback: [Streamlit App URL]?itinerary_id=[itinerary_id]"
+                    # - Users can click this link to go directly to feedback page with itinerary pre-loaded
                     pdf_buffer = generate_itinerary_pdf(
                         city_row['city'],
                         city_row['country'],
@@ -2428,12 +2533,13 @@ def itinerary_page():
                         itinerary,
                         city_row,
                         user_input,
-                        pdf_language
+                        pdf_language,
+                        itinerary_id=st.session_state.current_itinerary_id
                     )
                     
                     if pdf_buffer:
                         st.session_state.pdf_buffer = pdf_buffer
-                        st.success("✅ PDF ready!")
+                        st.success("✅ PDF ready with feedback link!")
                     else:
                         st.error("Failed to generate PDF.")
         
@@ -2452,6 +2558,7 @@ def itinerary_page():
         # =========================
         st.markdown("---")
         st.markdown("### Rate This Itinerary")
+        st.info(f"📌 Share feedback with itinerary ID: `{st.session_state.current_itinerary_id[:12]}...`")
         
         itinerary_rating = st.slider(
             "How would you rate this itinerary?",
@@ -2461,24 +2568,34 @@ def itinerary_page():
             key="itinerary_rating_slider"
         )
         
-        itinerary_feedback_text = st.text_input(
+        itinerary_feedback_text = st.text_area(
             "Additional comments (optional):",
             placeholder="What did you like or what could be improved?",
+            height=100,
             key="itinerary_feedback_text"
         )
         
-        if st.button("Submit Itinerary Feedback", type="secondary", use_container_width=True, key="submit_itinerary_feedback_btn"):
-            success = save_feedback_to_firebase(
-                module="itinerary",
-                feedback_type="rating",
-                target=selected_city,
-                value=itinerary_rating,
-                metadata={"text": itinerary_feedback_text}
-            )
-            if success:
-                st.success("Thank you for your feedback!")
-            else:
-                st.warning("Could not save feedback. Please ensure you are logged in.")
+        col1, col2 = st.columns([1, 1])
+        
+        with col1:
+            if st.button("Submit Itinerary Feedback", type="secondary", use_container_width=True, key="submit_itinerary_feedback_btn"):
+                success = save_feedback_to_firebase(
+                    module="itinerary",
+                    feedback_type="rating",
+                    target=selected_city,
+                    value=itinerary_rating,
+                    metadata={
+                        "text": itinerary_feedback_text,
+                        "itinerary_id": st.session_state.current_itinerary_id
+                    }
+                )
+                if success:
+                    st.success("Thank you for your feedback!")
+                else:
+                    st.warning("Could not save feedback. Please ensure you are logged in.")
+        
+        with col2:
+            st.info("💡 **Tip:** Users can access your itinerary link from the PDF to provide feedback anytime!")
 
 def video_page():
     st.title("🎬 Travel Video Generator")
