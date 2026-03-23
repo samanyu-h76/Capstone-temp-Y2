@@ -615,10 +615,6 @@ def sign_in(email, password):
         
         response = requests.post(url, json=payload, timeout=10)
         
-        # Show debug info on UI
-        st.write("DEBUG STATUS:", response.status_code)
-        st.write("DEBUG TEXT:", response.text)
-        
         # Try to parse JSON response
         try:
             data = response.json()
@@ -2521,10 +2517,6 @@ def itinerary_page():
         with col1:
             if st.button("Generate PDF", type="secondary", use_container_width=True, key="generate_pdf_btn"):
                 with st.spinner(f"Creating PDF..."):
-                    # NOTE: The generate_itinerary_pdf function should include:
-                    # - Itinerary ID in the PDF metadata
-                    # - At the end of PDF: "Share your feedback: [Streamlit App URL]?itinerary_id=[itinerary_id]"
-                    # - Users can click this link to go directly to feedback page with itinerary pre-loaded
                     pdf_buffer = generate_itinerary_pdf(
                         city_row['city'],
                         city_row['country'],
@@ -2533,13 +2525,12 @@ def itinerary_page():
                         itinerary,
                         city_row,
                         user_input,
-                        pdf_language,
-                        itinerary_id=st.session_state.current_itinerary_id
+                        pdf_language
                     )
                     
                     if pdf_buffer:
                         st.session_state.pdf_buffer = pdf_buffer
-                        st.success("✅ PDF ready with feedback link!")
+                        st.success("✅ PDF ready!")
                     else:
                         st.error("Failed to generate PDF.")
         
