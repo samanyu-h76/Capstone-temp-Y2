@@ -2605,6 +2605,97 @@ def itinerary_page():
         
         with col2:
             st.info("💡 **Tip:** Users can access your itinerary link from the PDF to provide feedback anytime!")
+    
+    # =========================
+    # RATE EXISTING ITINERARY BY ID
+    # =========================
+    st.markdown("---")
+    st.markdown("### Rate an Existing Itinerary")
+    st.write("Have an itinerary ID from a PDF? Enter it below to load and rate that itinerary.")
+    
+    col_input, col_load = st.columns([3, 1])
+    
+    with col_input:
+        itinerary_id_input = st.text_input(
+            "Enter Itinerary ID",
+            placeholder="Paste the itinerary ID from the PDF",
+            key="itinerary_id_lookup_input"
+        )
+    
+    with col_load:
+        st.write("")  # Spacing
+        load_itinerary = st.button("Load Itinerary", type="primary", use_container_width=True, key="load_itinerary_btn")
+    
+    if load_itinerary and itinerary_id_input:
+        if not FIREBASE_AVAILABLE or not db:
+            st.error("Firebase not available. Cannot load itinerary.")
+        else:
+            try:
+                # Query Firestore for the itinerary
+                itinerary_doc = db.collection("itineraries").document(itinerary_id_input).get()
+                
+                if itinerary_doc.exists:
+                    loaded_itinerary = itinerary_doc.to_dict()
+                    
+                    # Display the loaded itinerary
+                    st.success(f"✅ Itinerary loaded: {loaded_itinerary.get('city', 'Unknown')}")
+                    
+                    st.markdown("---")
+                    st.markdown("### Loaded Itinerary Preview")
+                    
+                    # Show basic info
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write(f"**City:** {loaded_itinerary.get('city', 'N/A')}")
+                        st.write(f"**Country:** {loaded_itinerary.get('country', 'N/A')}")
+                    with col2:
+                        created_date = loaded_itinerary.get('created_at', 'Unknown')
+                        st.write(f"**Created:** {created_date}")
+                    
+                    # Show itinerary text
+                    with st.expander("📖 View Full Itinerary"):
+                        st.write(loaded_itinerary.get('itinerary_text', 'No itinerary text available'))
+                    
+                    st.markdown("---")
+                    st.markdown("### Rate This Itinerary")
+                    
+                    # Rating input for loaded itinerary
+                    loaded_rating = st.slider(
+                        "How would you rate this itinerary?",
+                        min_value=1,
+                        max_value=5,
+                        value=3,
+                        key="loaded_itinerary_rating_slider"
+                    )
+                    
+                    loaded_feedback_text = st.text_area(
+                        "Additional comments (optional):",
+                        placeholder="Share your thoughts about this itinerary...",
+                        height=100,
+                        key="loaded_itinerary_feedback_text"
+                    )
+                    
+                    if st.button("Submit Feedback for This Itinerary", type="secondary", use_container_width=True, key="submit_loaded_itinerary_feedback_btn"):
+                        success = save_feedback_to_firebase(
+                            module="itinerary",
+                            feedback_type="rating",
+                            target=f"{loaded_itinerary.get('city', 'Unknown')}, {loaded_itinerary.get('country', 'Unknown')}",
+                            value=loaded_rating,
+                            metadata={
+                                "text": loaded_feedback_text,
+                                "itinerary_id": itinerary_id_input,
+                                "feedback_source": "existing_itinerary"
+                            }
+                        )
+                        if success:
+                            st.success("Thank you for your feedback on this itinerary!")
+                        else:
+                            st.warning("Could not save feedback. Please ensure you are logged in.")
+                else:
+                    st.error("❌ Itinerary not found. Please check the ID and try again.")
+            except Exception as e:
+                st.error(f"Error loading itinerary: {str(e)}")
+                print(f"Firestore lookup error: {str(e)}")
 
 def video_page():
     st.title("🎬 Travel Video Generator")
